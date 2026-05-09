@@ -129,10 +129,35 @@ def validate_quasi_and_sensitive_attributes(
     _validate_fields_exist(cleaned_qis, real_columns, "real", "Quasi identifiers")
     _validate_fields_exist(cleaned_qis, synthetic_columns, "synthetic", "Quasi identifiers")
 
-    _validate_fields_exist(cleaned_sas, real_columns, "real", "Sensitive attributes")
-    _validate_fields_exist(cleaned_sas, synthetic_columns, "synthetic", "Sensitive attributes")
+    # For sensitive attributes, be more lenient: return only those
+    # present in both datasets and report which are missing where. This
+    # allows callers to proceed with valid attributes while informing the
+    # user about missing ones.
+    missing_in_real = [sa for sa in cleaned_sas if sa not in real_columns]
+    missing_in_synthetic = [sa for sa in cleaned_sas if sa not in synthetic_columns]
+
+    valid_sas = [
+        sa
+        for sa in cleaned_sas
+        if sa in real_columns and sa in synthetic_columns
+    ]
+
+    if not valid_sas:
+        # No valid sensitive attributes that exist in both datasets —
+        # this is a terminal validation error for the upload flow.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No sensitive attributes were found in both datasets. "
+                f"Missing in real: {missing_in_real}, missing in synthetic: {missing_in_synthetic}"
+            ),
+        )
 
     return {
         "quasi_identifiers": cleaned_qis,
-        "sensitive_attributes": cleaned_sas
+        "sensitive_attributes": valid_sas,
+        "sensitive_attributes_missing": {
+            "missing_in_real": missing_in_real,
+            "missing_in_synthetic": missing_in_synthetic,
+        },
     }

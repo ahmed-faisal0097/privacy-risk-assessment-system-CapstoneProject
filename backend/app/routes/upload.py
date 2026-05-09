@@ -9,6 +9,7 @@ from app.services.validate import (
     extract_columns,
     validate_quasi_and_sensitive_attributes,
 )
+from app.validation import DEFAULT_QIS, DEFAULT_SAS
 from app.services.risk_evaluation import risk_evaluation
 from app.database import get_async_db
 from app.repositories import insert_dataset_upload
@@ -97,18 +98,21 @@ async def upload_datasets(
             f"{len(synthetic_columns)} columns - {synthetic_columns[:5]}..."
         )
 
-        logger.info("Validating quasi-identifiers and sensitive attributes...")
+        logger.info("Validating quasi-identifiers and sensitive attributes (using server defaults)...")
 
+        # Use server-side defaults for QIs and SAs to ensure consistent
+        # evaluation regardless of frontend input. This also simplifies
+        # testing and ensures both uniqueness and attribute-inference use
+        # the same columns.
         validated_fields = validate_quasi_and_sensitive_attributes(
-            quasi_identifiers=quasi_identifiers,
-            sensitive_attributes=sensitive_attributes,
+            quasi_identifiers=DEFAULT_QIS,
+            sensitive_attributes=DEFAULT_SAS,
             real_columns=real_columns,
             synthetic_columns=synthetic_columns,
         )
 
         logger.info(
-            f"Validation complete. "
-            f"QI: {validated_fields['quasi_identifiers']}, "
+            f"Validation complete. Using QI: {validated_fields['quasi_identifiers']}, "
             f"SA: {validated_fields['sensitive_attributes']}"
         )
 
@@ -207,6 +211,7 @@ async def upload_datasets(
             "status": "stored",
             "quasi_identifiers": validated_fields["quasi_identifiers"],
             "sensitive_attributes": validated_fields["sensitive_attributes"],
+            "sensitive_attributes_missing": validated_fields.get("sensitive_attributes_missing", {}),
             "risk_evaluation": evaluation_result,
             "real_file": {
                 "file_uuid": str(real_file_uuid),
