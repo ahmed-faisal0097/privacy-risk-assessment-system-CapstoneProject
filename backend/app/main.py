@@ -4,10 +4,13 @@ from fastapi.responses import FileResponse
 import os
 import json
 from typing import Dict, Any
+import logging
 
 from app.routes.upload import router as upload_router
-from app.database import engine
+from app.database import engine, async_engine, AsyncSessionLocal
 from app.models import Base
+from app.repositories import seed_risk_types
+from sqlalchemy import text
 
 try:
     from fastapi.staticfiles import StaticFiles
@@ -25,8 +28,63 @@ except Exception:
     generate_html = None
     generate_csv = None
 
+# Configure global Python logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()],
+    force=True
+)
+# Ensure app loggers are set to INFO level
+logging.getLogger('app').setLevel(logging.INFO)
 
 app = FastAPI(title="Privacy Risk Assessment API")
+
+# async def ensure_risk_type_schema() -> None:
+#     """Ensure risk_types and risk_results use the updated integer key schema."""
+#     needs_rebuild = False
+
+#     async with async_engine.connect() as conn:
+#         result = await conn.execute(text(
+#             """
+#             SELECT data_type
+#             FROM information_schema.columns
+#             WHERE table_schema = 'public'
+#               AND table_name = :table_name
+#               AND column_name = :column_name
+#             """
+#         ), {"table_name": "risk_types", "column_name": "risk_type_id"})
+#         row = result.first()
+#         if row is not None and row[0] != "integer":
+#             needs_rebuild = True
+
+#         if not needs_rebuild:
+#             result = await conn.execute(text(
+#                 """
+#                 SELECT data_type
+#                 FROM information_schema.columns
+#                 WHERE table_schema = 'public'
+#                   AND table_name = :table_name
+#                   AND column_name = :column_name
+#                 """
+#             ), {"table_name": "risk_results", "column_name": "risk_type_id"})
+#             row = result.first()
+#             if row is not None and row[0] != "integer":
+#                 needs_rebuild = True
+
+#     if needs_rebuild:
+#         with engine.begin() as conn:
+#             conn.execute(text("DROP TABLE IF EXISTS risk_results CASCADE; DROP TABLE IF EXISTS risk_types CASCADE;"))
+#         Base.metadata.create_all(bind=engine)
+
+#     # Ensure risk types are seeded regardless of whether the table was rebuilt.
+#     async with AsyncSessionLocal() as db:
+#         await seed_risk_types(db)
+
+
+# @app.on_event("startup")
+# async def startup_db_check() -> None:
+#     await ensure_risk_type_schema()
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,138 +1,84 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean, NUMERIC, ARRAY
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 from .database import Base
-import enum
 
-class DatasetKind(enum.Enum):
-    real = "real"
-    synthetic = "synthetic"
+class User(Base):
+    __tablename__ = "users"
+    
+    user_id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    name = Column(String, nullable=False)
+    email = Column(String, unique=True, nullable=False)
+    role = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-class DatasetUpload(Base):
-    __tablename__ = "dataset_uploads"
-
-    file_uuid = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-    dataset_kind = Column(Enum(DatasetKind), nullable=False)
+class Dataset(Base):
+    __tablename__ = "datasets"
+    
+    dataset_id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    dataset_name = Column(String, nullable=False)
+    dataset_type = Column(String, nullable=False)  # 'real' or 'synthetic'
     input_filename = Column(String, nullable=False)
-    stored_filename = Column(String, nullable=False)
-    file_path = Column(String, nullable=False)
-    file_extension = Column(String, nullable=False)
-    file_size_bytes = Column(Integer, nullable=False)
+    stored_filename = Column(String, nullable=True)
+    file_path = Column(String, nullable=True)
+    file_extension = Column(String, nullable=True)
+    file_size_bytes = Column(Integer, nullable=True)
     mime_type = Column(String, nullable=True)
-    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+    upload_time = Column(DateTime(timezone=True), server_default=func.now())
     row_count = Column(Integer, nullable=True)
     column_count = Column(Integer, nullable=True)
-    status = Column(String, nullable=True)
-    notes = Column(Text, nullable=True)
+    status = Column(String, default="uploaded")
 
-class RealDatasetRecord(Base):
-    __tablename__ = "real_dataset_records"
+class Attribute(Base):
+    __tablename__ = "attributes"
+    
+    attribute_id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    dataset_id = Column(UUID(as_uuid=True), ForeignKey("datasets.dataset_id", ondelete="CASCADE"), nullable=False)
+    attribute_name = Column(String, nullable=False)
+    is_qi = Column(Boolean, default=False)
+    is_sa = Column(Boolean, default=False)
+    data_type = Column(String, nullable=True)
 
-    record_uuid = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-    file_uuid = Column(UUID(as_uuid=True), ForeignKey("dataset_uploads.file_uuid"), nullable=False)
-    encounter_id = Column(String, nullable=True)
-    patient_nbr = Column(String, nullable=True)
-    race = Column(String, nullable=True)
-    gender = Column(String, nullable=True)
-    age = Column(String, nullable=True)
-    weight = Column(String, nullable=True)
-    admission_type_id = Column(String, nullable=True)
-    discharge_disposition_id = Column(String, nullable=True)
-    admission_source_id = Column(String, nullable=True)
-    time_in_hospital = Column(String, nullable=True)
-    payer_code = Column(String, nullable=True)
-    medical_specialty = Column(String, nullable=True)
-    num_lab_procedures = Column(String, nullable=True)
-    num_procedures = Column(String, nullable=True)
-    num_medications = Column(String, nullable=True)
-    number_outpatient = Column(String, nullable=True)
-    number_emergency = Column(String, nullable=True)
-    number_inpatient = Column(String, nullable=True)
-    diag_1 = Column(String, nullable=True)
-    diag_2 = Column(String, nullable=True)
-    diag_3 = Column(String, nullable=True)
-    number_diagnoses = Column(String, nullable=True)
-    max_glu_serum = Column(String, nullable=True)
-    A1Cresult = Column(String, nullable=True)
-    metformin = Column(String, nullable=True)
-    repaglinide = Column(String, nullable=True)
-    nateglinide = Column(String, nullable=True)
-    chlorpropamide = Column(String, nullable=True)
-    glimepiride = Column(String, nullable=True)
-    acetohexamide = Column(String, nullable=True)
-    glipizide = Column(String, nullable=True)
-    glyburide = Column(String, nullable=True)
-    tolbutamide = Column(String, nullable=True)
-    pioglitazone = Column(String, nullable=True)
-    rosiglitazone = Column(String, nullable=True)
-    acarbose = Column(String, nullable=True)
-    miglitol = Column(String, nullable=True)
-    troglitazone = Column(String, nullable=True)
-    tolazamide = Column(String, nullable=True)
-    examide = Column(String, nullable=True)
-    citoglipton = Column(String, nullable=True)
-    insulin = Column(String, nullable=True)
-    glyburide_metformin = Column("glyburide-metformin", String, nullable=True)
-    glipizide_metformin = Column("glipizide-metformin", String, nullable=True)
-    glimepiride_pioglitazone = Column("glimepiride-pioglitazone", String, nullable=True)
-    metformin_rosiglitazone = Column("metformin-rosiglitazone", String, nullable=True)
-    metformin_pioglitazone = Column("metformin-pioglitazone", String, nullable=True)
-    change = Column(String, nullable=True)
-    diabetesMed = Column(String, nullable=True)
-    readmitted = Column(String, nullable=True)
+class RiskType(Base):
+    __tablename__ = "risk_types"
+    
+    risk_type_id = Column(Integer, primary_key=True)
+    risk_name = Column(String(100), unique=True, nullable=False)
 
-class SyntheticDatasetRecord(Base):
-    __tablename__ = "synthetic_dataset_records"
+class RiskEvaluation(Base):
+    __tablename__ = "risk_evaluations"
+    
+    evaluation_id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    real_dataset_id = Column(UUID(as_uuid=True), ForeignKey("datasets.dataset_id"), nullable=True)
+    synthetic_dataset_id = Column(UUID(as_uuid=True), ForeignKey("datasets.dataset_id"), nullable=True)
+    evaluated_time = Column(DateTime(timezone=True), server_default=func.now())
+    status = Column(String, default="pending")
+    overall_score = Column(NUMERIC(8, 4), nullable=True)
+    overall_risk_level = Column(String, nullable=True)
+    selected_qis = Column(ARRAY(String), nullable=True)
+    selected_sas = Column(ARRAY(String), nullable=True)
 
-    record_uuid = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-    file_uuid = Column(UUID(as_uuid=True), ForeignKey("dataset_uploads.file_uuid"), nullable=False)
-    encounter_id = Column(String, nullable=True)
-    patient_nbr = Column(String, nullable=True)
-    race = Column(String, nullable=True)
-    gender = Column(String, nullable=True)
-    age = Column(String, nullable=True)
-    weight = Column(String, nullable=True)
-    admission_type_id = Column(String, nullable=True)
-    discharge_disposition_id = Column(String, nullable=True)
-    admission_source_id = Column(String, nullable=True)
-    time_in_hospital = Column(String, nullable=True)
-    payer_code = Column(String, nullable=True)
-    medical_specialty = Column(String, nullable=True)
-    num_lab_procedures = Column(String, nullable=True)
-    num_procedures = Column(String, nullable=True)
-    num_medications = Column(String, nullable=True)
-    number_outpatient = Column(String, nullable=True)
-    number_emergency = Column(String, nullable=True)
-    number_inpatient = Column(String, nullable=True)
-    diag_1 = Column(String, nullable=True)
-    diag_2 = Column(String, nullable=True)
-    diag_3 = Column(String, nullable=True)
-    number_diagnoses = Column(String, nullable=True)
-    max_glu_serum = Column(String, nullable=True)
-    A1Cresult = Column(String, nullable=True)
-    metformin = Column(String, nullable=True)
-    repaglinide = Column(String, nullable=True)
-    nateglinide = Column(String, nullable=True)
-    chlorpropamide = Column(String, nullable=True)
-    glimepiride = Column(String, nullable=True)
-    acetohexamide = Column(String, nullable=True)
-    glipizide = Column(String, nullable=True)
-    glyburide = Column(String, nullable=True)
-    tolbutamide = Column(String, nullable=True)
-    pioglitazone = Column(String, nullable=True)
-    rosiglitazone = Column(String, nullable=True)
-    acarbose = Column(String, nullable=True)
-    miglitol = Column(String, nullable=True)
-    troglitazone = Column(String, nullable=True)
-    tolazamide = Column(String, nullable=True)
-    examide = Column(String, nullable=True)
-    citoglipton = Column(String, nullable=True)
-    insulin = Column(String, nullable=True)
-    glyburide_metformin = Column("glyburide-metformin", String, nullable=True)
-    glipizide_metformin = Column("glipizide-metformin", String, nullable=True)
-    glimepiride_pioglitazone = Column("glimepiride-pioglitazone", String, nullable=True)
-    metformin_rosiglitazone = Column("metformin-rosiglitazone", String, nullable=True)
-    metformin_pioglitazone = Column("metformin-pioglitazone", String, nullable=True)
-    change = Column(String, nullable=True)
-    diabetesMed = Column(String, nullable=True)
-    readmitted = Column(String, nullable=True)
+class RiskResult(Base):
+    __tablename__ = "risk_results"
+    
+    result_id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    evaluation_id = Column(UUID(as_uuid=True), ForeignKey("risk_evaluations.evaluation_id", ondelete="CASCADE"), nullable=False)
+    risk_type_id = Column(Integer, ForeignKey("risk_types.risk_type_id"), nullable=False)
+    risk_score = Column(NUMERIC(8, 4), nullable=True)
+    risk_summary = Column(Text, nullable=True)
+    risk_level = Column(String, nullable=True)
+    result_json = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class Report(Base):
+    __tablename__ = "reports"
+    
+    report_id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    evaluation_id = Column(UUID(as_uuid=True), ForeignKey("risk_evaluations.evaluation_id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    report_type = Column(String, nullable=False)
+    report_name = Column(String, nullable=False)
+    report_path = Column(String, nullable=True)
+    generated_time = Column(DateTime(timezone=True), server_default=func.now())

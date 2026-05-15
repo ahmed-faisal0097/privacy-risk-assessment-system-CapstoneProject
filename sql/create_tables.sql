@@ -1,133 +1,110 @@
--- SQL Migration for PostgreSQL Tables
+-- Enable required extensions
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- Create enum type for dataset_kind
-CREATE TYPE dataset_kind AS ENUM ('real', 'synthetic');
+-- Drop tables in reverse dependency order
+DROP TABLE IF EXISTS reports CASCADE;
+DROP TABLE IF EXISTS risk_results CASCADE;
+DROP TABLE IF EXISTS risk_evaluations CASCADE;
+DROP TABLE IF EXISTS attributes CASCADE;
+DROP TABLE IF EXISTS risk_types CASCADE;
+DROP TABLE IF EXISTS datasets CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
 
--- Create dataset_uploads table
-CREATE TABLE dataset_uploads (
-    file_uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    dataset_kind dataset_kind NOT NULL,
+-- Create users table
+CREATE TABLE users (
+    user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR NOT NULL,
+    email VARCHAR UNIQUE NOT NULL,
+    role VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Create datasets table
+CREATE TABLE datasets (
+    dataset_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    dataset_name VARCHAR NOT NULL,
+    dataset_type VARCHAR NOT NULL CHECK (dataset_type IN ('real', 'synthetic')),
     input_filename VARCHAR NOT NULL,
-    stored_filename VARCHAR NOT NULL,
-    file_path VARCHAR NOT NULL,
-    file_extension VARCHAR NOT NULL,
-    file_size_bytes INTEGER NOT NULL,
+    stored_filename VARCHAR,
+    file_path VARCHAR,
+    file_extension VARCHAR,
+    file_size_bytes BIGINT,
     mime_type VARCHAR,
-    uploaded_at TIMESTAMPTZ DEFAULT NOW(),
+    upload_time TIMESTAMPTZ DEFAULT NOW(),
     row_count INTEGER,
     column_count INTEGER,
-    status VARCHAR,
-    notes TEXT
+    status VARCHAR DEFAULT 'uploaded'
 );
 
--- Create real_dataset_records table
-CREATE TABLE real_dataset_records (
-    record_uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    file_uuid UUID NOT NULL REFERENCES dataset_uploads(file_uuid),
-    encounter_id VARCHAR,
-    patient_nbr VARCHAR,
-    race VARCHAR,
-    gender VARCHAR,
-    age VARCHAR,
-    weight VARCHAR,
-    admission_type_id VARCHAR,
-    discharge_disposition_id VARCHAR,
-    admission_source_id VARCHAR,
-    time_in_hospital VARCHAR,
-    payer_code VARCHAR,
-    medical_specialty VARCHAR,
-    num_lab_procedures VARCHAR,
-    num_procedures VARCHAR,
-    num_medications VARCHAR,
-    number_outpatient VARCHAR,
-    number_emergency VARCHAR,
-    number_inpatient VARCHAR,
-    diag_1 VARCHAR,
-    diag_2 VARCHAR,
-    diag_3 VARCHAR,
-    number_diagnoses VARCHAR,
-    max_glu_serum VARCHAR,
-    A1Cresult VARCHAR,
-    metformin VARCHAR,
-    repaglinide VARCHAR,
-    nateglinide VARCHAR,
-    chlorpropamide VARCHAR,
-    glimepiride VARCHAR,
-    acetohexamide VARCHAR,
-    glipizide VARCHAR,
-    glyburide VARCHAR,
-    tolbutamide VARCHAR,
-    pioglitazone VARCHAR,
-    rosiglitazone VARCHAR,
-    acarbose VARCHAR,
-    miglitol VARCHAR,
-    troglitazone VARCHAR,
-    tolazamide VARCHAR,
-    examide VARCHAR,
-    citoglipton VARCHAR,
-    insulin VARCHAR,
-    "glyburide-metformin" VARCHAR,
-    "glipizide-metformin" VARCHAR,
-    "glimepiride-pioglitazone" VARCHAR,
-    "metformin-rosiglitazone" VARCHAR,
-    "metformin-pioglitazone" VARCHAR,
-    change VARCHAR,
-    diabetesMed VARCHAR,
-    readmitted VARCHAR
+-- Create attributes table
+CREATE TABLE attributes (
+    attribute_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    dataset_id UUID NOT NULL REFERENCES datasets(dataset_id) ON DELETE CASCADE,
+    attribute_name VARCHAR NOT NULL,
+    is_qi BOOLEAN DEFAULT FALSE,
+    is_sa BOOLEAN DEFAULT FALSE,
+    data_type VARCHAR,
+    UNIQUE (dataset_id, attribute_name)
 );
 
--- Create synthetic_dataset_records table
-CREATE TABLE synthetic_dataset_records (
-    record_uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    file_uuid UUID NOT NULL REFERENCES dataset_uploads(file_uuid),
-    encounter_id VARCHAR,
-    patient_nbr VARCHAR,
-    race VARCHAR,
-    gender VARCHAR,
-    age VARCHAR,
-    weight VARCHAR,
-    admission_type_id VARCHAR,
-    discharge_disposition_id VARCHAR,
-    admission_source_id VARCHAR,
-    time_in_hospital VARCHAR,
-    payer_code VARCHAR,
-    medical_specialty VARCHAR,
-    num_lab_procedures VARCHAR,
-    num_procedures VARCHAR,
-    num_medications VARCHAR,
-    number_outpatient VARCHAR,
-    number_emergency VARCHAR,
-    number_inpatient VARCHAR,
-    diag_1 VARCHAR,
-    diag_2 VARCHAR,
-    diag_3 VARCHAR,
-    number_diagnoses VARCHAR,
-    max_glu_serum VARCHAR,
-    A1Cresult VARCHAR,
-    metformin VARCHAR,
-    repaglinide VARCHAR,
-    nateglinide VARCHAR,
-    chlorpropamide VARCHAR,
-    glimepiride VARCHAR,
-    acetohexamide VARCHAR,
-    glipizide VARCHAR,
-    glyburide VARCHAR,
-    tolbutamide VARCHAR,
-    pioglitazone VARCHAR,
-    rosiglitazone VARCHAR,
-    acarbose VARCHAR,
-    miglitol VARCHAR,
-    troglitazone VARCHAR,
-    tolazamide VARCHAR,
-    examide VARCHAR,
-    citoglipton VARCHAR,
-    insulin VARCHAR,
-    "glyburide-metformin" VARCHAR,
-    "glipizide-metformin" VARCHAR,
-    "glimepiride-pioglitazone" VARCHAR,
-    "metformin-rosiglitazone" VARCHAR,
-    "metformin-pioglitazone" VARCHAR,
-    change VARCHAR,
-    diabetesMed VARCHAR,
-    readmitted VARCHAR
+-- Create risk_types table
+CREATE TABLE risk_types (
+    risk_type_id INTEGER PRIMARY KEY,
+    risk_name VARCHAR(100) UNIQUE NOT NULL
 );
+
+-- Create risk_evaluations table
+CREATE TABLE risk_evaluations (
+    evaluation_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    real_dataset_id UUID REFERENCES datasets(dataset_id),
+    synthetic_dataset_id UUID REFERENCES datasets(dataset_id),
+    evaluated_time TIMESTAMPTZ DEFAULT NOW(),
+    status VARCHAR DEFAULT 'pending',
+    overall_score NUMERIC(8,4),
+    overall_risk_level VARCHAR,
+    selected_qis TEXT[],
+    selected_sas TEXT[]
+);
+
+-- Create risk_results table
+CREATE TABLE risk_results (
+    result_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    evaluation_id UUID NOT NULL REFERENCES risk_evaluations(evaluation_id) ON DELETE CASCADE,
+    risk_type_id INTEGER NOT NULL REFERENCES risk_types(risk_type_id),
+    risk_score NUMERIC(8,4),
+    risk_summary TEXT,
+    risk_level VARCHAR,
+    result_json JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (evaluation_id, risk_type_id)
+);
+
+-- Create reports table
+CREATE TABLE reports (
+    report_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    evaluation_id UUID NOT NULL REFERENCES risk_evaluations(evaluation_id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    report_type VARCHAR NOT NULL,
+    report_name VARCHAR NOT NULL,
+    report_path VARCHAR,
+    generated_time TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Create indexes for foreign keys and common queries
+CREATE INDEX idx_datasets_user_id ON datasets(user_id);
+CREATE INDEX idx_attributes_dataset_id ON attributes(dataset_id);
+CREATE INDEX idx_risk_evaluations_user_id ON risk_evaluations(user_id);
+CREATE INDEX idx_risk_evaluations_real_dataset_id ON risk_evaluations(real_dataset_id);
+CREATE INDEX idx_risk_evaluations_synthetic_dataset_id ON risk_evaluations(synthetic_dataset_id);
+CREATE INDEX idx_risk_results_evaluation_id ON risk_results(evaluation_id);
+CREATE INDEX idx_reports_evaluation_id ON reports(evaluation_id);
+
+-- Seed initial risk types
+INSERT INTO risk_types (risk_type_id, risk_name) VALUES
+    (1, 'Uniqueness Risk'),
+    (2, 'Rare Combination Risk'),
+    (3, 'Linkage / Re-identification Risk'),
+    (4, 'Attribute Inference Risk')
+ON CONFLICT (risk_type_id) DO NOTHING;
