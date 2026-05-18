@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import UploadCard from "@/app/components/UploadCard";
 import SummaryCard from "@/app/components/SummaryCard";
@@ -11,11 +11,19 @@ import QuasiIdentifierSelector, {
 import SensitiveAttributeSelector, {
   DEFAULT_SENSITIVE_ATTRIBUTES,
 } from "@/app/components/SensitiveAttributeSelector";
+import AnalysisProgressSection from "@/app/components/AnalysisProgressSection";
 
-// Backend base URL — set NEXT_PUBLIC_API_BASE_URL in .env.local
-const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
-/* ── Icons ── */
+/* ── Progress stages ──────────────────────────────────────────────────────── */
+const PROGRESS_STAGES = [
+  { at: 300,  progress: 20, status: "Uploading datasets..." },
+  { at: 900,  progress: 40, status: "Validating schema..." },
+  { at: 1800, progress: 65, status: "Processing attributes..." },
+  { at: 3000, progress: 85, status: "Running privacy evaluation..." },
+] as const;
+
+/* ── Icons ────────────────────────────────────────────────────────────────── */
 function ShieldIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
@@ -58,26 +66,58 @@ function MissingIcon() {
   );
 }
 
-/* ── Mock summary cards (shown while backend result not yet loaded) ── */
-const SUMMARY = [
-  { icon: <RowsIcon />, iconBg: "bg-[#dbeafe]", value: "—", label: "Number of Rows" },
-  { icon: <ColumnsIcon />, iconBg: "bg-[#cbfbf1]", value: "—", label: "Number of Columns" },
-  { icon: <MissingIcon />, iconBg: "bg-[#ffedd4]", value: "—", label: "Missing Values" },
-];
+/* ── CSV summary ──────────────────────────────────────────────────────────── */
+interface CsvSummary {
+  rowCount: number;
+  columnCount: number;
+  missingValueCount: number;
+  missingValuePercent: number;
+}
 
-/* ── Error banner ── */
+/**
+ * Parses a CSV file and returns row count, column count, and missing value
+ * statistics. Treats empty strings, "?", "null", and "na" as missing cells.
+ * Handles the diabetic dataset convention where "?" denotes unknown values.
+ */
+async function parseCsvSummary(file: File): Promise<CsvSummary> {
+  const text = await file.text();
+
+  const firstNewline = text.indexOf("\n");
+  if (firstNewline === -1) {
+    return { rowCount: 0, columnCount: 0, missingValueCount: 0, missingValuePercent: 0 };
+  }
+
+  const headerLine = text.substring(0, firstNewline).trim();
+  // Count columns by splitting header on commas (quoted commas are rare in
+  // dataset headers, so a simple split is reliable here)
+  const columnCount = headerLine.split(",").length;
+
+  const body = text.substring(firstNewline + 1);
+  const dataLines = body.split("\n").filter((l) => l.trim() !== "");
+  const rowCount = dataLines.length;
+
+  let missingValueCount = 0;
+  for (const line of dataLines) {
+    const cells = line.split(",");
+    for (const cell of cells) {
+      const v = cell.trim().replace(/^"|"$/g, "").toLowerCase();
+      if (v === "" || v === "?" || v === "null" || v === "na" || v === "n/a") {
+        missingValueCount++;
+      }
+    }
+  }
+
+  const totalCells = rowCount * columnCount;
+  const missingValuePercent =
+    totalCells > 0 ? (missingValueCount / totalCells) * 100 : 0;
+
+  return { rowCount, columnCount, missingValueCount, missingValuePercent };
+}
+
 function ErrorBanner({ message }: { message: string }) {
   return (
     <div className="w-full max-w-5xl bg-[#fef2f2] border border-[#fca5a5] rounded-[10px] px-5 py-4">
       <p className="text-[#b91c1c] text-sm font-medium leading-5">{message}</p>
-    </div>
-  );
-}
-
-function SuccessBanner({ message }: { message: string }) {
-  return (
-    <div className="w-full max-w-5xl bg-[#ecfdf5] border border-[#86efac] rounded-[10px] px-5 py-4">
-      <p className="text-[#047857] text-sm font-medium leading-5">{message}</p>
     </div>
   );
 }
@@ -87,30 +127,43 @@ export default function Home() {
 
   const [realFile, setRealFile] = useState<File | null>(null);
   const [syntheticFile, setSyntheticFile] = useState<File | null>(null);
+  const [realSummary, setRealSummary] = useState<CsvSummary | null>(null);
+  const [syntheticSummary, setSyntheticSummary] = useState<CsvSummary | null>(null);
   const [selectedQIs, setSelectedQIs] = useState<string[]>(DEFAULT_QUASI_IDENTIFIERS);
   const [selectedSAs, setSelectedSAs] = useState<string[]>(DEFAULT_SENSITIVE_ATTRIBUTES);
   const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressStatus, setProgressStatus] = useState("Uploading datasets...");
+
+  const progressTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const bothUploaded = realFile !== null && syntheticFile !== null;
 
-  // ── Reset ──────────────────────────────────────────────────────────────────
+  // Compute overlap in real time for inline validation
+  const overlap = selectedQIs.filter((qi) => selectedSAs.includes(qi));
+  const hasOverlap = overlap.length > 0;
+
+  /* ── Reset ─────────────────────────────────────────────────────────────── */
   const handleReset = () => {
     setRealFile(null);
     setSyntheticFile(null);
+    setRealSummary(null);
+    setSyntheticSummary(null);
     setSelectedQIs(DEFAULT_QUASI_IDENTIFIERS);
     setSelectedSAs(DEFAULT_SENSITIVE_ATTRIBUTES);
     setError(null);
-    setSuccessMessage(null);
+    setIsSubmitting(false);
+    setProgress(0);
+    setProgressStatus("Uploading datasets...");
+    progressTimers.current.forEach(clearTimeout);
+    progressTimers.current = [];
   };
 
-  // ── Run Analysis ───────────────────────────────────────────────────────────
+  /* ── Run Analysis ───────────────────────────────────────────────────────── */
   const handleRunAnalysis = async () => {
     setError(null);
-    setSuccessMessage(null);
 
-    // Client-side validation
     if (!realFile || !syntheticFile) {
       setError("Please upload both datasets before running the analysis.");
       return;
@@ -123,39 +176,42 @@ export default function Home() {
       setError("Please select at least one sensitive attribute.");
       return;
     }
-    const overlappingSelections = selectedQIs.filter((qi) =>
-      selectedSAs.includes(qi)
-    );
-    if (overlappingSelections.length > 0) {
+    if (hasOverlap) {
       setError(
-        "Quasi-identifiers and sensitive attributes must be different. Please remove overlapping selections before running the analysis."
+        "Quasi-identifiers and sensitive attributes must not overlap. Remove conflicting selections highlighted in red."
       );
       return;
     }
 
-    // Build FormData
+    // Start progress simulation
+    setProgress(5);
+    setProgressStatus("Uploading datasets...");
+    setIsSubmitting(true);
+
+    progressTimers.current.forEach(clearTimeout);
+    progressTimers.current = PROGRESS_STAGES.map(({ at, progress: p, status }) =>
+      setTimeout(() => {
+        setProgress(p);
+        setProgressStatus(status);
+      }, at)
+    );
+
     const form = new FormData();
     form.append("real_file", realFile);
     form.append("synthetic_file", syntheticFile);
     selectedQIs.forEach((qi) => form.append("quasi_identifiers", qi));
     selectedSAs.forEach((sa) => form.append("sensitive_attributes", sa));
 
-    setIsSubmitting(true);
+    let navigating = false;
     try {
-      // TODO (backend integration): POST to the FastAPI validation endpoint.
-      // The response JSON is stored in sessionStorage and read by /results.
       const res = await fetch(`${API_BASE_URL}/api/upload`, {
         method: "POST",
         body: form,
       });
 
-      const contentType = res.headers.get("content-type");
-      const data = contentType?.includes("application/json")
-        ? await res.json()
-        : { message: await res.text() };
+      const data = await res.json();
 
       if (!res.ok) {
-        // Surface the backend error message if present
         const msg =
           data?.detail ??
           data?.message ??
@@ -164,33 +220,98 @@ export default function Home() {
         return;
       }
 
-      // Store the full response so the results page can read it
+      // Refresh summary cards with authoritative backend counts if provided
+      if (data?.real_file) {
+        const rf = data.real_file;
+        setRealSummary((prev) =>
+          prev
+            ? {
+                ...prev,
+                rowCount: rf.row_count ?? prev.rowCount,
+                columnCount: rf.column_count ?? prev.columnCount,
+              }
+            : prev
+        );
+      }
+      if (data?.synthetic_file) {
+        const sf = data.synthetic_file;
+        setSyntheticSummary((prev) =>
+          prev
+            ? {
+                ...prev,
+                rowCount: sf.row_count ?? prev.rowCount,
+                columnCount: sf.column_count ?? prev.columnCount,
+              }
+            : prev
+        );
+      }
+
+      // Animate to 100% then navigate
+      progressTimers.current.forEach(clearTimeout);
+      progressTimers.current = [];
+      setProgress(100);
+      setProgressStatus("Preparing results...");
+
       sessionStorage.setItem("analysisResult", JSON.stringify(data));
-      setSuccessMessage(data?.message ?? "Files uploaded successfully.");
-      await new Promise((resolve) => setTimeout(resolve, 900));
-      router.push("/results");
+      navigating = true;
+
+      progressTimers.current.push(
+        setTimeout(() => {
+          router.push("/results");
+        }, 600)
+      );
     } catch {
       setError(
         "Could not reach the backend. Make sure the API server is running and NEXT_PUBLIC_API_BASE_URL is set correctly."
       );
     } finally {
-      setIsSubmitting(false);
+      // Keep the progress section visible while navigating; reset on failure
+      if (!navigating) {
+        setIsSubmitting(false);
+        setProgress(0);
+        setProgressStatus("Uploading datasets...");
+        progressTimers.current.forEach(clearTimeout);
+        progressTimers.current = [];
+      }
     }
   };
 
+  const handleQIChange = (v: string[]) => { setSelectedQIs(v); setError(null); };
+  const handleSAChange = (v: string[]) => { setSelectedSAs(v); setError(null); };
+
   return (
-    <div className="min-h-screen bg-[#f9fafb] flex flex-col">
-      {/* Header */}
-      <header className="bg-white border-b border-[#e5e7eb] w-full">
-        <div className="max-w-5xl mx-auto px-6 py-6 flex items-center gap-3">
-          <div className="bg-[#155dfc] w-10 h-10 rounded-[10px] flex items-center justify-center shrink-0">
+    <div className="min-h-screen bg-transparent flex flex-col">
+      {/* Header — gradient banner, centered */}
+      <header
+        className="relative w-full shadow-md overflow-hidden"
+        style={{ background: "linear-gradient(135deg, #0d2d78 0%, #155dfc 60%, #1a72f5 100%)" }}
+      >
+        {/* Subtle radial glow for depth */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background:
+              "radial-gradient(ellipse 60% 80% at 50% -20%, rgba(255,255,255,0.12) 0%, transparent 70%)",
+          }}
+        />
+        <div className="relative max-w-5xl mx-auto px-6 py-9 flex flex-col sm:flex-row items-center justify-center gap-4 text-center sm:text-left">
+          {/* Icon */}
+          <div
+            className="w-12 h-12 rounded-[12px] flex items-center justify-center shrink-0"
+            style={{
+              background: "rgba(255,255,255,0.15)",
+              boxShadow: "inset 0 1px 1px rgba(255,255,255,0.25), 0 2px 8px rgba(0,0,0,0.15)",
+              backdropFilter: "blur(4px)",
+            }}
+          >
             <ShieldIcon />
           </div>
-          <div className="flex flex-col gap-0.5">
-            <h1 className="text-[#101828] text-2xl font-semibold leading-8">
+          {/* Title + subtitle */}
+          <div className="flex flex-col gap-1">
+            <h1 className="text-white text-2xl font-semibold leading-8 tracking-tight drop-shadow-sm">
               Privacy Risk Assessment System
             </h1>
-            <p className="text-[#4a5565] text-sm leading-5">
+            <p className="text-blue-200 text-sm leading-5 font-normal">
               Evaluate privacy risks in synthetic healthcare datasets
             </p>
           </div>
@@ -200,7 +321,7 @@ export default function Home() {
       {/* Main content */}
       <main className="flex-1 flex flex-col items-center px-6 py-10 gap-8">
         {/* Upload card */}
-        <div className="w-full max-w-5xl bg-white border border-[#e5e7eb] rounded-[14px] shadow-sm p-8 flex flex-col gap-6">
+        <div className="w-full max-w-5xl bg-white border border-[#e5e7eb] rounded-[14px] card-shadow p-8 flex flex-col gap-6">
           <div className="flex flex-col gap-2">
             <h2 className="text-[#101828] text-lg font-semibold leading-7">
               Upload Datasets
@@ -215,61 +336,138 @@ export default function Home() {
               title="Real Dataset"
               accent="blue"
               file={realFile}
-              onFileSelect={(f) => { setRealFile(f); setError(null); setSuccessMessage(null); }}
-              onRemove={() => { setRealFile(null); setSuccessMessage(null); }}
+              onFileSelect={(f) => {
+                setRealFile(f);
+                setError(null);
+                parseCsvSummary(f).then(setRealSummary);
+              }}
+              onRemove={() => { setRealFile(null); setRealSummary(null); }}
             />
             <UploadCard
               title="Synthetic Dataset"
               accent="teal"
               file={syntheticFile}
-              onFileSelect={(f) => { setSyntheticFile(f); setError(null); setSuccessMessage(null); }}
-              onRemove={() => { setSyntheticFile(null); setSuccessMessage(null); }}
+              onFileSelect={(f) => {
+                setSyntheticFile(f);
+                setError(null);
+                parseCsvSummary(f).then(setSyntheticSummary);
+              }}
+              onRemove={() => { setSyntheticFile(null); setSyntheticSummary(null); }}
             />
           </div>
         </div>
 
-        {/* Sections visible only after both files are uploaded */}
         {bothUploaded && (
           <>
             {/* Select Quasi Identifiers */}
             <QuasiIdentifierSelector
               selected={selectedQIs}
-              onChange={(v) => { setSelectedQIs(v); setError(null); setSuccessMessage(null); }}
+              onChange={handleQIChange}
+              conflicting={overlap}
+              disabled={isSubmitting}
             />
 
             {/* Select Sensitive Attributes */}
             <SensitiveAttributeSelector
               selected={selectedSAs}
-              onChange={(v) => { setSelectedSAs(v); setError(null); setSuccessMessage(null); }}
+              onChange={handleSAChange}
+              conflicting={overlap}
+              disabled={isSubmitting}
             />
 
             {/* Dataset Summary */}
-            <div className="w-full max-w-5xl flex flex-col gap-4">
+            <div className="w-full max-w-5xl flex flex-col gap-5">
               <h2 className="text-[#101828] text-lg font-semibold leading-7">
                 Dataset Summary
               </h2>
-              <div className="flex flex-col sm:flex-row gap-6">
-                {SUMMARY.map((item) => (
+
+              {/* Real Dataset group */}
+              <div className="flex flex-col gap-3">
+                <p className="text-xs font-semibold uppercase tracking-widest text-[#2b7fff]">
+                  Real Dataset
+                </p>
+                <div className="flex flex-col sm:flex-row gap-6">
                   <SummaryCard
-                    key={item.label}
-                    icon={item.icon}
-                    iconBg={item.iconBg}
-                    value={item.value}
-                    label={item.label}
+                    icon={<RowsIcon />}
+                    iconBg="bg-[#dbeafe]"
+                    value={realSummary ? realSummary.rowCount.toLocaleString() : "—"}
+                    label="Number of Rows"
                   />
-                ))}
+                  <SummaryCard
+                    icon={<ColumnsIcon />}
+                    iconBg="bg-[#cbfbf1]"
+                    value={realSummary ? String(realSummary.columnCount) : "—"}
+                    label="Number of Columns"
+                  />
+                  <SummaryCard
+                    icon={<MissingIcon />}
+                    iconBg="bg-[#ffedd4]"
+                    value={
+                      realSummary
+                        ? `${realSummary.missingValuePercent.toFixed(1)}%`
+                        : "—"
+                    }
+                    label="Missing Values"
+                  />
+                </div>
+              </div>
+
+              {/* Synthetic Dataset group */}
+              <div className="flex flex-col gap-3">
+                <p className="text-xs font-semibold uppercase tracking-widest text-[#009689]">
+                  Synthetic Dataset
+                </p>
+                <div className="flex flex-col sm:flex-row gap-6">
+                  <SummaryCard
+                    icon={<RowsIcon />}
+                    iconBg="bg-[#dbeafe]"
+                    value={
+                      syntheticSummary
+                        ? syntheticSummary.rowCount.toLocaleString()
+                        : "—"
+                    }
+                    label="Number of Rows"
+                  />
+                  <SummaryCard
+                    icon={<ColumnsIcon />}
+                    iconBg="bg-[#cbfbf1]"
+                    value={
+                      syntheticSummary
+                        ? String(syntheticSummary.columnCount)
+                        : "—"
+                    }
+                    label="Number of Columns"
+                  />
+                  <SummaryCard
+                    icon={<MissingIcon />}
+                    iconBg="bg-[#ffedd4]"
+                    value={
+                      syntheticSummary
+                        ? `${syntheticSummary.missingValuePercent.toFixed(1)}%`
+                        : "—"
+                    }
+                    label="Missing Values"
+                  />
+                </div>
               </div>
             </div>
 
-            {/* Action buttons */}
-            <ActionButtons
-              onRunAnalysis={handleRunAnalysis}
-              onReset={handleReset}
-              isSubmitting={isSubmitting}
-            />
+            {/* Action buttons OR progress section */}
+            {isSubmitting ? (
+              <AnalysisProgressSection
+                progress={progress}
+                statusText={progressStatus}
+              />
+            ) : (
+              <ActionButtons
+                onRunAnalysis={handleRunAnalysis}
+                onReset={handleReset}
+                isSubmitting={false}
+                runDisabled={hasOverlap}
+              />
+            )}
 
-            {/* Error banner — shown below buttons */}
-            {successMessage && <SuccessBanner message={successMessage} />}
+            {/* Error banner */}
             {error && <ErrorBanner message={error} />}
           </>
         )}

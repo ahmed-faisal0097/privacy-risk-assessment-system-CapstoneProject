@@ -6,6 +6,8 @@ interface ActionButtonsProps {
   onRunAnalysis: () => void;
   onReset: () => void;
   isSubmitting?: boolean;
+  /** Disables the Run Analysis button without changing the label (e.g. overlap error) */
+  runDisabled?: boolean;
 }
 
 function PlayIcon() {
@@ -46,16 +48,18 @@ export default function ActionButtons({
   onRunAnalysis,
   onReset,
   isSubmitting = false,
+  runDisabled = false,
 }: ActionButtonsProps) {
+  const btnDisabled = isSubmitting || runDisabled;
   return (
     <div className="flex items-center justify-center gap-4">
       <button
         type="button"
         onClick={onRunAnalysis}
-        disabled={isSubmitting}
+        disabled={btnDisabled}
         className={[
           "text-white text-base font-medium leading-6 h-12 px-6 rounded-[10px] flex items-center gap-2 transition-colors",
-          isSubmitting
+          btnDisabled
             ? "bg-[#7aabfe] cursor-not-allowed"
             : "bg-[#155dfc] hover:bg-[#1151d6]",
         ].join(" ")}

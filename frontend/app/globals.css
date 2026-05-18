@@ -1,3 +1,23 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html {
+    /* Soft blue-teal gradient fixed to viewport — scrolling content floats over it */
+    background: linear-gradient(155deg, #eaefff 0%, #f4f7fb 45%, #edfaf8 100%);
+    background-attachment: fixed;
+  }
+
+  body {
+    min-height: 100vh;
+    background: transparent;
+  }
+}
+
+@layer utilities {
+  /* Reusable card shadow used across both pages */
+  .card-shadow {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(21, 93, 252, 0.06);
+  }
+}

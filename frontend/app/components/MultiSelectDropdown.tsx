@@ -1,0 +1,283 @@
+"use client";
+
+import { useState, useRef, useEffect } from "react";
+
+export type SelectOption = {
+  label: string;
+  value: string;
+};
+
+interface MultiSelectDropdownProps {
+  options: SelectOption[];
+  selected: string[];
+  onChange: (updated: string[]) => void;
+  placeholder?: string;
+  accentColor?: "blue" | "teal";
+  conflicting?: string[];
+  disabled?: boolean;
+}
+
+const ACCENT = {
+  blue: {
+    chip: "bg-[#eff6ff] text-[#1c398e] border-[#bfdbfe]",
+    chipConflict: "bg-[#fef2f2] text-[#b91c1c] border-[#fca5a5]",
+    checkBg: "bg-[#2b7fff]",
+    optionSelected: "bg-[#eff6ff] text-[#1c398e]",
+    optionHover: "hover:bg-[#f0f6ff]",
+    openBorder: "border-[#2b7fff]",
+    focusRing: "ring-[#2b7fff]/30",
+  },
+  teal: {
+    chip: "bg-[#f0fdfa] text-[#007a6e] border-[#99f6e4]",
+    chipConflict: "bg-[#fef2f2] text-[#b91c1c] border-[#fca5a5]",
+    checkBg: "bg-[#009689]",
+    optionSelected: "bg-[#f0fdfa] text-[#007a6e]",
+    optionHover: "hover:bg-[#f0fdfb]",
+    openBorder: "border-[#009689]",
+    focusRing: "ring-[#009689]/30",
+  },
+} as const;
+
+export default function MultiSelectDropdown({
+  options,
+  selected,
+  onChange,
+  placeholder = "Select attributes...",
+  accentColor = "blue",
+  conflicting = [],
+  disabled = false,
+}: MultiSelectDropdownProps) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  const a = ACCENT[accentColor];
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setSearch("");
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  useEffect(() => {
+    if (open) {
+      setTimeout(() => searchRef.current?.focus(), 50);
+    }
+  }, [open]);
+
+  const toggle = (value: string) => {
+    if (selected.includes(value)) {
+      onChange(selected.filter((v) => v !== value));
+    } else {
+      onChange([...selected, value]);
+    }
+  };
+
+  const remove = (value: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    onChange(selected.filter((v) => v !== value));
+  };
+
+  const filteredOptions = options.filter(
+    (opt) =>
+      opt.label.toLowerCase().includes(search.toLowerCase()) ||
+      opt.value.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const selectedOptions = options.filter((opt) => selected.includes(opt.value));
+
+  return (
+    <div ref={containerRef} className="relative w-full">
+      {/* Trigger */}
+      <div
+        onClick={() => !disabled && setOpen((prev) => !prev)}
+        className={[
+          "min-h-[46px] w-full rounded-[10px] border-2 bg-white px-3 py-2 transition-all",
+          disabled
+            ? "opacity-60 cursor-not-allowed border-[#e5e7eb]"
+            : "cursor-pointer",
+          !disabled && open
+            ? `${a.openBorder} ring-4 ${a.focusRing}`
+            : !disabled
+            ? "border-[#e5e7eb] hover:border-[#9ca3af]"
+            : "",
+        ].join(" ")}
+      >
+        <div className="flex items-start gap-2">
+          <div className="flex-1 flex flex-wrap gap-1.5 min-h-[24px]">
+            {selectedOptions.length === 0 ? (
+              <span className="text-[#9ca3af] text-sm leading-6 select-none">
+                {placeholder}
+              </span>
+            ) : (
+              selectedOptions.map((opt) => {
+                const isConflict = conflicting.includes(opt.value);
+                return (
+                  <span
+                    key={opt.value}
+                    className={[
+                      "inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-md border select-none",
+                      isConflict ? a.chipConflict : a.chip,
+                    ].join(" ")}
+                  >
+                    {opt.label}
+                    {!disabled && (
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => remove(opt.value, e)}
+                        className="opacity-50 hover:opacity-100 transition-opacity ml-0.5 shrink-0"
+                        aria-label={`Remove ${opt.label}`}
+                      >
+                        <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+                          <path
+                            d="M8 2L2 8M2 2l6 6"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                      </button>
+                    )}
+                  </span>
+                );
+              })
+            )}
+          </div>
+          {/* Chevron */}
+          <div className="shrink-0 mt-1 text-[#9ca3af]">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      {/* Dropdown panel */}
+      {open && !disabled && (
+        <div className="absolute z-50 top-full mt-1.5 w-full bg-white border border-[#e5e7eb] rounded-[10px] shadow-xl overflow-hidden">
+          {/* Search */}
+          <div className="px-3 py-2.5 border-b border-[#e5e7eb] bg-[#f9fafb]">
+            <div className="flex items-center gap-2">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#9ca3af"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                ref={searchRef}
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search attributes..."
+                className="flex-1 text-sm text-[#101828] placeholder-[#9ca3af] outline-none bg-transparent"
+                onClick={(e) => e.stopPropagation()}
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setSearch(""); }}
+                  className="text-[#9ca3af] hover:text-[#6a7282]"
+                >
+                  <svg width="12" height="12" viewBox="0 0 10 10" fill="none">
+                    <path d="M8 2L2 8M2 2l6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Options */}
+          <div className="max-h-60 overflow-y-auto">
+            {filteredOptions.length === 0 ? (
+              <p className="text-sm text-[#9ca3af] text-center py-5">
+                No attributes found
+              </p>
+            ) : (
+              filteredOptions.map((opt) => {
+                const isSelected = selected.includes(opt.value);
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => toggle(opt.value)}
+                    className={[
+                      "w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors",
+                      isSelected ? a.optionSelected : `text-[#364153] ${a.optionHover}`,
+                    ].join(" ")}
+                  >
+                    {/* Checkbox indicator */}
+                    <div
+                      className={[
+                        "w-4 h-4 shrink-0 rounded border-2 flex items-center justify-center transition-colors",
+                        isSelected
+                          ? `${a.checkBg} border-transparent`
+                          : "bg-white border-[#d1d5dc]",
+                      ].join(" ")}
+                    >
+                      {isSelected && (
+                        <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                          <path
+                            d="M1 4L3.5 6.5L9 1"
+                            stroke="white"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      )}
+                    </div>
+                    <span className="font-medium flex-1">{opt.label}</span>
+                    <span className="text-[10px] font-mono text-[#9ca3af] bg-[#f3f4f6] px-1.5 py-0.5 rounded shrink-0">
+                      {opt.value}
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="px-4 py-2 border-t border-[#e5e7eb] bg-[#f9fafb] flex items-center justify-between">
+            <span className="text-xs text-[#6a7282]">
+              {selected.length} selected · {filteredOptions.length} shown
+            </span>
+            {selected.length > 0 && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onChange([]); }}
+                className="text-xs text-[#9ca3af] hover:text-[#b91c1c] transition-colors"
+              >
+                Clear all
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
