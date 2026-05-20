@@ -23,10 +23,11 @@ except Exception:
     uniqueness_and_rare_combination = None
 
 try:
-    from app.generate_report import generate_html, generate_csv
+    from app.generate_report import generate_html, generate_csv, load_all_results
 except Exception:
     generate_html = None
     generate_csv = None
+    load_all_results = None
 
 # Configure global Python logging
 logging.basicConfig(
@@ -35,56 +36,9 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()],
     force=True
 )
-# Ensure app loggers are set to INFO level
 logging.getLogger('app').setLevel(logging.INFO)
 
 app = FastAPI(title="Privacy Risk Assessment API")
-
-# async def ensure_risk_type_schema() -> None:
-#     """Ensure risk_types and risk_results use the updated integer key schema."""
-#     needs_rebuild = False
-
-#     async with async_engine.connect() as conn:
-#         result = await conn.execute(text(
-#             """
-#             SELECT data_type
-#             FROM information_schema.columns
-#             WHERE table_schema = 'public'
-#               AND table_name = :table_name
-#               AND column_name = :column_name
-#             """
-#         ), {"table_name": "risk_types", "column_name": "risk_type_id"})
-#         row = result.first()
-#         if row is not None and row[0] != "integer":
-#             needs_rebuild = True
-
-#         if not needs_rebuild:
-#             result = await conn.execute(text(
-#                 """
-#                 SELECT data_type
-#                 FROM information_schema.columns
-#                 WHERE table_schema = 'public'
-#                   AND table_name = :table_name
-#                   AND column_name = :column_name
-#                 """
-#             ), {"table_name": "risk_results", "column_name": "risk_type_id"})
-#             row = result.first()
-#             if row is not None and row[0] != "integer":
-#                 needs_rebuild = True
-
-#     if needs_rebuild:
-#         with engine.begin() as conn:
-#             conn.execute(text("DROP TABLE IF EXISTS risk_results CASCADE; DROP TABLE IF EXISTS risk_types CASCADE;"))
-#         Base.metadata.create_all(bind=engine)
-
-#     # Ensure risk types are seeded regardless of whether the table was rebuilt.
-#     async with AsyncSessionLocal() as db:
-#         await seed_risk_types(db)
-
-
-# @app.on_event("startup")
-# async def startup_db_check() -> None:
-#     await ensure_risk_type_schema()
 
 app.add_middleware(
     CORSMiddleware,
@@ -165,50 +119,43 @@ def download_report_html(result_dir: str = None):
                 "results/r1_uniq_<uuid>_<uuid>"
                 This is relative to WORKING_DIR (/app in Docker).
     """
-    if generate_html is None:
+    if generate_html is None or load_all_results is None:
         raise HTTPException(
             status_code=500,
             detail="Report generator not available — check generate_report.py exists."
         )
 
-    # Resolve the result directory
+    # Resolve the absolute result directory
     if result_dir:
-        # result_dir comes from the frontend as-is from the upload response.
-        # risk_evaluation.py created it with os.makedirs(result_dir) from /app,
-        # so joining with WORKING_DIR gives the correct absolute path.
         abs_result_dir = os.path.join(WORKING_DIR, result_dir)
     else:
         abs_result_dir = results_dir
-
-    summary_path = os.path.join(abs_result_dir, "syn_k_summary.json")
 
     # Log for debugging — visible in docker compose logs
     print(f"[report/html] WORKING_DIR={WORKING_DIR}")
     print(f"[report/html] result_dir param={result_dir}")
     print(f"[report/html] abs_result_dir={abs_result_dir}")
-    print(f"[report/html] summary_path={summary_path}")
-    print(f"[report/html] exists={os.path.exists(summary_path)}")
 
-    if not os.path.exists(summary_path):
-        # Show what actually exists to help debug
-        existing = []
-        if os.path.isdir(results_dir):
-            existing = os.listdir(results_dir)
+    # Check the result folder exists
+    if not os.path.isdir(abs_result_dir):
         raise HTTPException(
             status_code=404,
-            detail=(
-                f"syn_k_summary.json not found at: {summary_path}. "
-                f"Contents of {results_dir}: {existing}"
-            )
+            detail=f"Result directory not found: {abs_result_dir}"
         )
 
-    with open(summary_path, encoding="utf-8") as f:
-        summary = json.load(f)
+    # Load all three risk results from the folder
+    try:
+        data = load_all_results(abs_result_dir)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to load risk results: {str(e)}"
+        )
 
     html_out = os.path.join(abs_result_dir, "privacy_risk_report.html")
 
     try:
-        generate_html(summary, html_out)
+        generate_html(data, html_out)
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -228,7 +175,7 @@ def download_report_csv(result_dir: str = None):
     Generate and return the CSV audit trail as a file download.
     Same path logic as /api/report/html.
     """
-    if generate_csv is None:
+    if generate_csv is None or load_all_results is None:
         raise HTTPException(status_code=500, detail="Report generator not available.")
 
     if result_dir:
@@ -236,21 +183,24 @@ def download_report_csv(result_dir: str = None):
     else:
         abs_result_dir = results_dir
 
-    summary_path = os.path.join(abs_result_dir, "syn_k_summary.json")
-
-    if not os.path.exists(summary_path):
+    if not os.path.isdir(abs_result_dir):
         raise HTTPException(
             status_code=404,
-            detail=f"syn_k_summary.json not found at: {summary_path}"
+            detail=f"Result directory not found: {abs_result_dir}"
         )
 
-    with open(summary_path, encoding="utf-8") as f:
-        summary = json.load(f)
+    try:
+        data = load_all_results(abs_result_dir)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to load risk results: {str(e)}"
+        )
 
     csv_out = os.path.join(abs_result_dir, "privacy_risk_report_summary.csv")
 
     try:
-        generate_csv(summary, csv_out)
+        generate_csv(data, csv_out)
     except Exception as e:
         raise HTTPException(
             status_code=500,
