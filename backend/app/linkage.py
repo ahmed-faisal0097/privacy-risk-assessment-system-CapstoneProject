@@ -46,7 +46,9 @@ def _read_dataset(path: str) -> pd.DataFrame:
 
 
 def _risk_level_from_score(score_pct: float) -> str:
-    if score_pct >= 30:
+    # Thresholds aligned with the rest of the system (upload.py, frontend):
+    # HIGH ≥ 20%, MEDIUM ≥ 10%, LOW otherwise.
+    if score_pct >= 20:
         return "HIGH"
     if score_pct >= 10:
         return "MEDIUM"

@@ -23,10 +23,11 @@ except Exception:
     uniqueness_and_rare_combination = None
 
 try:
-    from app.generate_report import generate_html, generate_csv
+    from app.generate_report import generate_html, generate_csv, generate_pdf
 except Exception:
     generate_html = None
     generate_csv = None
+    generate_pdf = None
 
 # Configure global Python logging
 logging.basicConfig(
@@ -263,6 +264,75 @@ def download_report_csv(result_dir: str = None):
         path=csv_out,
         media_type="text/csv",
         filename="privacy_risk_report_summary.csv",
+    )
+
+
+@app.get("/api/report/pdf")
+def download_report_pdf(result_dir: str = None):
+    """
+    Generate and return the PDF audit report as a file download.
+    Follows the same result_dir resolution pattern as /api/report/html and /csv.
+    Optionally enriches the PDF with linkage_summary.json if present in the
+    same result directory.
+    """
+    if generate_pdf is None:
+        raise HTTPException(
+            status_code=500,
+            detail="PDF report generator not available — check reportlab is installed."
+        )
+
+    if result_dir:
+        abs_result_dir = os.path.join(WORKING_DIR, result_dir)
+    else:
+        abs_result_dir = results_dir
+
+    summary_path = os.path.join(abs_result_dir, "syn_k_summary.json")
+
+    print(f"[report/pdf] WORKING_DIR={WORKING_DIR}")
+    print(f"[report/pdf] result_dir param={result_dir}")
+    print(f"[report/pdf] abs_result_dir={abs_result_dir}")
+    print(f"[report/pdf] summary_path={summary_path}")
+    print(f"[report/pdf] exists={os.path.exists(summary_path)}")
+
+    if not os.path.exists(summary_path):
+        existing = []
+        if os.path.isdir(results_dir):
+            existing = os.listdir(results_dir)
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"syn_k_summary.json not found at: {summary_path}. "
+                f"Contents of {results_dir}: {existing}"
+            )
+        )
+
+    with open(summary_path, encoding="utf-8") as f:
+        summary = json.load(f)
+
+    # Optionally load linkage summary for richer PDF content
+    linkage_data = None
+    linkage_path = os.path.join(abs_result_dir, "linkage_summary.json")
+    if os.path.exists(linkage_path):
+        try:
+            with open(linkage_path, encoding="utf-8") as f:
+                linkage_data = json.load(f)
+        except Exception:
+            pass  # Non-fatal — PDF is generated without linkage section
+
+    pdf_out = os.path.join(abs_result_dir, "privacy_risk_report.pdf")
+
+    try:
+        generate_pdf(summary, pdf_out, linkage_data=linkage_data)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate PDF report: {str(e)}"
+        )
+
+    return FileResponse(
+        path=pdf_out,
+        media_type="application/pdf",
+        filename="privacy-risk-report.pdf",
     )
 
 

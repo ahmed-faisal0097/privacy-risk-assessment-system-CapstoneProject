@@ -1,5 +1,7 @@
 "use client";
 
+import SegmentedProgressBar from "@/app/components/SegmentedProgressBar";
+
 interface AnalysisProgressSectionProps {
   progress: number;
   statusText: string;
@@ -12,64 +14,73 @@ export default function AnalysisProgressSection({
   const clampedProgress = Math.min(100, Math.max(0, progress));
 
   return (
-    <div className="w-full max-w-5xl bg-white border border-[#e5e7eb] rounded-[14px] shadow-sm p-8">
-      <div className="flex flex-col gap-6">
+    <div
+      className="w-full max-w-5xl rounded-2xl overflow-hidden"
+      style={{
+        background: "linear-gradient(135deg, #0F172A 0%, #1E2D50 55%, #0F172A 100%)",
+        boxShadow:
+          "0 4px 24px rgba(15,23,42,0.3), 0 0 0 1px rgba(30,58,138,0.35)",
+      }}
+    >
+      {/* Top accent line */}
+      <div
+        className="h-[2px] w-full"
+        style={{
+          background: "linear-gradient(90deg, #1E3A8A, #2563EB, #0891B2, #2563EB, #1E3A8A)",
+        }}
+      />
+
+      <div className="p-8 flex flex-col gap-6">
         {/* Header */}
-        <div className="flex items-center gap-3">
-          {/* Animated spinner */}
-          <div className="shrink-0 w-9 h-9 rounded-full bg-[#eff6ff] flex items-center justify-center">
+        <div className="flex items-center gap-4">
+          <div
+            className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center"
+            style={{
+              background: "rgba(37,99,235,0.18)",
+              border: "1px solid rgba(37,99,235,0.3)",
+              boxShadow: "0 0 12px rgba(37,99,235,0.15)",
+            }}
+          >
             <svg
-              className="animate-spin text-[#2b7fff]"
+              className="animate-spin"
               width="18"
               height="18"
               viewBox="0 0 24 24"
               fill="none"
-              stroke="currentColor"
+              stroke="#60A5FA"
               strokeWidth="2.5"
               strokeLinecap="round"
             >
-              <path d="M12 2a10 10 0 0 1 10 10" opacity="0.25" />
+              <path d="M12 2a10 10 0 0 1 10 10" opacity="0.3" />
               <path d="M12 2a10 10 0 0 1 10 10" />
             </svg>
           </div>
           <div>
-            <h2 className="text-[#101828] text-lg font-semibold leading-7">
+            <h2 className="text-white text-lg font-bold leading-7 tracking-tight">
               Running Analysis
             </h2>
-            <p className="text-[#4a5565] text-sm leading-5">
+            <p className="text-[#94A3B8] text-sm leading-5">
               Please wait while your datasets are being evaluated
             </p>
           </div>
         </div>
 
-        {/* Progress bar */}
-        <div className="flex flex-col gap-2">
+        {/* Progress bar + status */}
+        <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-[#364153] flex items-center gap-2">
-              {/* Pulsing dot */}
+            <span className="text-sm font-medium text-[#CBD5E1] flex items-center gap-2">
               <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#2b7fff] opacity-60" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#2b7fff]" />
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#60A5FA] opacity-60" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#60A5FA]" />
               </span>
               {statusText}
             </span>
-            <span className="text-sm font-semibold text-[#2b7fff] tabular-nums">
+            <span className="text-sm font-bold text-[#60A5FA] tabular-nums font-mono">
               {clampedProgress}%
             </span>
           </div>
 
-          {/* Track */}
-          <div className="w-full h-2.5 bg-[#f3f4f6] rounded-full overflow-hidden">
-            {/* Fill */}
-            <div
-              style={{
-                width: `${clampedProgress}%`,
-                background: "linear-gradient(90deg, #2b7fff 0%, #155dfc 50%, #009689 100%)",
-                transition: "width 0.7s ease-out",
-              }}
-              className="h-full rounded-full"
-            />
-          </div>
+          <SegmentedProgressBar progress={clampedProgress} totalSegments={36} />
         </div>
 
         {/* Stage indicators */}
@@ -85,16 +96,23 @@ export default function AnalysisProgressSection({
               <div key={stage} className="flex flex-col items-center gap-1.5">
                 <div
                   className={[
-                    "w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold transition-all duration-500",
+                    "w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-500",
                     isDone
-                      ? "bg-[#155dfc] text-white"
+                      ? "bg-[#2563EB] text-white"
                       : isActive
-                      ? "bg-[#eff6ff] text-[#2b7fff] ring-2 ring-[#2b7fff]/30"
-                      : "bg-[#f3f4f6] text-[#9ca3af]",
+                      ? "text-[#93C5FD] ring-2 ring-[#2563EB]/40"
+                      : "text-[#475569]",
                   ].join(" ")}
+                  style={
+                    isDone
+                      ? { boxShadow: "0 0 8px rgba(37,99,235,0.5)" }
+                      : isActive
+                      ? { background: "rgba(30,58,138,0.5)" }
+                      : { background: "rgba(30,58,138,0.18)" }
+                  }
                 >
                   {isDone ? (
-                    <svg width="12" height="10" viewBox="0 0 10 8" fill="none">
+                    <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
                       <path
                         d="M1 4L3.5 6.5L9 1"
                         stroke="white"
@@ -111,10 +129,10 @@ export default function AnalysisProgressSection({
                   className={[
                     "text-[10px] text-center leading-3 font-medium",
                     isDone
-                      ? "text-[#155dfc]"
+                      ? "text-[#60A5FA]"
                       : isActive
-                      ? "text-[#364153]"
-                      : "text-[#9ca3af]",
+                      ? "text-[#CBD5E1]"
+                      : "text-[#475569]",
                   ].join(" ")}
                 >
                   {stage}

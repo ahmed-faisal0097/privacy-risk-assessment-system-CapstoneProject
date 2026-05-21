@@ -3,19 +3,19 @@ import type { RiskLevel } from "@/app/results/mockData";
 
 const levelConfig: Record<
   RiskLevel,
-  { cardBorder: string; iconBg: string; icon: React.ReactNode }
+  { leftBorderColor: string; iconBg: string; icon: React.ReactNode }
 > = {
   High: {
-    cardBorder: "border-[#ffc9c9]",
-    iconBg: "bg-[#ffe2e2]",
+    leftBorderColor: "#DC2626",
+    iconBg: "bg-[#FEF2F2]",
     icon: (
       <svg
         xmlns="http://www.w3.org/2000/svg"
-        width="24"
-        height="24"
+        width="22"
+        height="22"
         viewBox="0 0 24 24"
         fill="none"
-        stroke="#c10007"
+        stroke="#DC2626"
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -27,16 +27,16 @@ const levelConfig: Record<
     ),
   },
   Medium: {
-    cardBorder: "border-[#ffd6a8]",
-    iconBg: "bg-[#ffedd4]",
+    leftBorderColor: "#F59E0B",
+    iconBg: "bg-[#FFFBEB]",
     icon: (
       <svg
         xmlns="http://www.w3.org/2000/svg"
-        width="24"
-        height="24"
+        width="22"
+        height="22"
         viewBox="0 0 24 24"
         fill="none"
-        stroke="#ca3500"
+        stroke="#D97706"
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -48,16 +48,16 @@ const levelConfig: Record<
     ),
   },
   Low: {
-    cardBorder: "border-[#b9f8cf]",
-    iconBg: "bg-[#dcfce7]",
+    leftBorderColor: "#10B981",
+    iconBg: "bg-[#F0FDF4]",
     icon: (
       <svg
         xmlns="http://www.w3.org/2000/svg"
-        width="24"
-        height="24"
+        width="22"
+        height="22"
         viewBox="0 0 24 24"
         fill="none"
-        stroke="#008236"
+        stroke="#059669"
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -80,20 +80,28 @@ export default function RiskOverviewCard({
   value,
   level,
 }: RiskOverviewCardProps) {
-  const { cardBorder, iconBg, icon } = levelConfig[level];
+  const { leftBorderColor, iconBg, icon } = levelConfig[level];
   return (
     <div
-      className={`flex-1 min-w-0 bg-white ${cardBorder} border rounded-[14px] shadow-sm p-6 flex flex-col gap-4`}
+      className="flex-1 min-w-0 bg-white border border-[#E2E8F0] rounded-2xl p-6 flex flex-col gap-4 transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5"
+      style={{
+        borderLeft: `4px solid ${leftBorderColor}`,
+        boxShadow: "0 1px 3px rgba(15,23,42,0.04), 0 4px 16px rgba(30,58,138,0.06)",
+      }}
     >
       <div className="flex items-start justify-between">
-        <div className={`${iconBg} w-12 h-12 rounded-[10px] flex items-center justify-center shrink-0`}>
+        <div
+          className={`${iconBg} w-11 h-11 rounded-xl flex items-center justify-center shrink-0`}
+        >
           {icon}
         </div>
         <RiskBadge level={level} />
       </div>
       <div className="flex flex-col gap-1">
-        <p className="text-[#101828] text-2xl font-semibold leading-8">{value}</p>
-        <p className="text-[#4a5565] text-sm leading-5">{label}</p>
+        <p className="text-[#0F172A] text-2xl font-bold leading-8 tracking-tight">
+          {value}
+        </p>
+        <p className="text-[#64748B] text-sm leading-5">{label}</p>
       </div>
     </div>
   );

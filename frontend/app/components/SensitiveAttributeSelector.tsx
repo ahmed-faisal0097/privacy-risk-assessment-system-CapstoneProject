@@ -55,14 +55,33 @@ export default function SensitiveAttributeSelector({
   disabled = false,
 }: SensitiveAttributeSelectorProps) {
   return (
-    <div className="w-full max-w-5xl bg-white border border-[#e5e7eb] rounded-[14px] shadow-sm p-8 flex flex-col gap-5">
-      <div className="flex flex-col gap-2">
-        <h2 className="text-[#101828] text-lg font-semibold leading-7">
-          Select Sensitive Attributes
-        </h2>
-        <p className="text-[#4a5565] text-sm leading-5">
-          Choose attributes containing sensitive information that must be protected during analysis
-        </p>
+    <div
+      className="w-full max-w-5xl bg-white rounded-2xl p-8 flex flex-col gap-5"
+      style={{
+        border: "1px solid #E2E8F0",
+        borderLeftWidth: "4px",
+        borderLeftColor: "#0891B2",
+        boxShadow: "0 1px 3px rgba(15,23,42,0.04), 0 4px 16px rgba(8,145,178,0.07)",
+      }}
+    >
+      {/* Header */}
+      <div className="flex items-start gap-3">
+        <div
+          className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
+          style={{ background: "#ECFEFF", border: "1px solid #A5F3FC" }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0891B2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          </svg>
+        </div>
+        <div className="flex flex-col gap-1">
+          <h2 className="text-[#0F172A] text-lg font-bold leading-7 tracking-tight">
+            Select Sensitive Attributes
+          </h2>
+          <p className="text-[#64748B] text-sm leading-5">
+            Choose attributes containing sensitive information that must be protected during analysis
+          </p>
+        </div>
       </div>
 
       <MultiSelectDropdown
@@ -76,14 +95,14 @@ export default function SensitiveAttributeSelector({
       />
 
       {conflicting.length > 0 && (
-        <div className="flex items-start gap-2 bg-[#fef2f2] border border-[#fca5a5] rounded-[8px] px-4 py-3">
+        <div className="flex items-start gap-2.5 bg-[#FEF2F2] border border-[#FECACA] rounded-xl px-4 py-3">
           <svg
             className="shrink-0 mt-0.5"
             width="14"
             height="14"
             viewBox="0 0 24 24"
             fill="none"
-            stroke="#b91c1c"
+            stroke="#DC2626"
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -92,7 +111,7 @@ export default function SensitiveAttributeSelector({
             <line x1="12" y1="8" x2="12" y2="12" />
             <line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
-          <p className="text-[#b91c1c] text-xs leading-5">
+          <p className="text-[#DC2626] text-xs leading-5">
             <span className="font-semibold">Overlap detected:</span>{" "}
             {conflicting.map((v) => {
               const opt = sensitiveAttributeOptions.find((o) => o.value === v);
@@ -103,7 +122,7 @@ export default function SensitiveAttributeSelector({
         </div>
       )}
 
-      <p className="text-[#6a7282] text-xs leading-4">
+      <p className="text-[#94A3B8] text-xs leading-4">
         Sensitive attributes will be used to evaluate privacy disclosure risks and must not overlap with quasi-identifiers
       </p>
     </div>

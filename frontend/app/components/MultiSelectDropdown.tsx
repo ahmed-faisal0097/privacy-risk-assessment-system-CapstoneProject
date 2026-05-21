@@ -19,22 +19,22 @@ interface MultiSelectDropdownProps {
 
 const ACCENT = {
   blue: {
-    chip: "bg-[#eff6ff] text-[#1c398e] border-[#bfdbfe]",
-    chipConflict: "bg-[#fef2f2] text-[#b91c1c] border-[#fca5a5]",
-    checkBg: "bg-[#2b7fff]",
-    optionSelected: "bg-[#eff6ff] text-[#1c398e]",
-    optionHover: "hover:bg-[#f0f6ff]",
-    openBorder: "border-[#2b7fff]",
-    focusRing: "ring-[#2b7fff]/30",
+    chip: "bg-[#EFF6FF] text-[#1E3A8A] border-[#BFDBFE]",
+    chipConflict: "bg-[#FEF2F2] text-[#DC2626] border-[#FECACA]",
+    checkBg: "bg-[#2563EB]",
+    optionSelected: "bg-[#EFF6FF] text-[#1E3A8A]",
+    optionHover: "hover:bg-[#F0F6FF]",
+    openBorder: "border-[#2563EB]",
+    focusRing: "ring-[#2563EB]/20",
   },
   teal: {
-    chip: "bg-[#f0fdfa] text-[#007a6e] border-[#99f6e4]",
-    chipConflict: "bg-[#fef2f2] text-[#b91c1c] border-[#fca5a5]",
-    checkBg: "bg-[#009689]",
-    optionSelected: "bg-[#f0fdfa] text-[#007a6e]",
-    optionHover: "hover:bg-[#f0fdfb]",
-    openBorder: "border-[#009689]",
-    focusRing: "ring-[#009689]/30",
+    chip: "bg-[#ECFEFF] text-[#0E7490] border-[#A5F3FC]",
+    chipConflict: "bg-[#FEF2F2] text-[#DC2626] border-[#FECACA]",
+    checkBg: "bg-[#0891B2]",
+    optionSelected: "bg-[#ECFEFF] text-[#0E7490]",
+    optionHover: "hover:bg-[#F0FEFF]",
+    openBorder: "border-[#0891B2]",
+    focusRing: "ring-[#0891B2]/20",
   },
 } as const;
 
@@ -98,14 +98,14 @@ export default function MultiSelectDropdown({
       <div
         onClick={() => !disabled && setOpen((prev) => !prev)}
         className={[
-          "min-h-[46px] w-full rounded-[10px] border-2 bg-white px-3 py-2 transition-all",
+          "min-h-[46px] w-full rounded-xl border-2 bg-white px-3 py-2 transition-all duration-150",
           disabled
-            ? "opacity-60 cursor-not-allowed border-[#e5e7eb]"
+            ? "opacity-60 cursor-not-allowed border-[#E2E8F0]"
             : "cursor-pointer",
           !disabled && open
             ? `${a.openBorder} ring-4 ${a.focusRing}`
             : !disabled
-            ? "border-[#e5e7eb] hover:border-[#9ca3af]"
+            ? "border-[#CBD5E1] hover:border-[#94A3B8]"
             : "",
         ].join(" ")}
       >
@@ -171,9 +171,11 @@ export default function MultiSelectDropdown({
 
       {/* Dropdown panel */}
       {open && !disabled && (
-        <div className="absolute z-50 top-full mt-1.5 w-full bg-white border border-[#e5e7eb] rounded-[10px] shadow-xl overflow-hidden">
+        <div className="absolute z-50 top-full mt-1.5 w-full bg-white border border-[#E2E8F0] rounded-xl shadow-xl overflow-hidden"
+          style={{ boxShadow: "0 8px 32px rgba(15,23,42,0.12), 0 2px 8px rgba(30,58,138,0.07)" }}
+        >
           {/* Search */}
-          <div className="px-3 py-2.5 border-b border-[#e5e7eb] bg-[#f9fafb]">
+          <div className="px-3 py-2.5 border-b border-[#E2E8F0] bg-[#F8FAFC]">
             <div className="flex items-center gap-2">
               <svg
                 width="14"
@@ -236,7 +238,7 @@ export default function MultiSelectDropdown({
                         "w-4 h-4 shrink-0 rounded border-2 flex items-center justify-center transition-colors",
                         isSelected
                           ? `${a.checkBg} border-transparent`
-                          : "bg-white border-[#d1d5dc]",
+                          : "bg-white border-[#CBD5E1]",
                       ].join(" ")}
                     >
                       {isSelected && (
@@ -262,7 +264,7 @@ export default function MultiSelectDropdown({
           </div>
 
           {/* Footer */}
-          <div className="px-4 py-2 border-t border-[#e5e7eb] bg-[#f9fafb] flex items-center justify-between">
+          <div className="px-4 py-2 border-t border-[#E2E8F0] bg-[#F8FAFC] flex items-center justify-between">
             <span className="text-xs text-[#6a7282]">
               {selected.length} selected · {filteredOptions.length} shown
             </span>

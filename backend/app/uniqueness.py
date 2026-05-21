@@ -76,8 +76,14 @@ def uniqueness_and_rare_combination(
     if not os.path.exists(synthetic_path):
         raise FileNotFoundError(synthetic_path)
 
-    real_df = pd.read_csv(real_path, low_memory=False)
-    syn_df = pd.read_csv(synthetic_path, low_memory=False)
+    def _read_file(path: str) -> pd.DataFrame:
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".xlsx":
+            return pd.read_excel(path)
+        return pd.read_csv(path, low_memory=False)
+
+    real_df = _read_file(real_path)
+    syn_df = _read_file(synthetic_path)
 
     # At this point we have two DataFrames: `real_df` (the baseline) and
     # `syn_df` (the synthetic records to evaluate). All downstream computations

@@ -51,8 +51,14 @@ def attribute_inference_evaluation(
     if not os.path.exists(synthetic_path):
         raise FileNotFoundError(synthetic_path)
 
-    real_df = pd.read_csv(real_path, low_memory=False)
-    syn_df = pd.read_csv(synthetic_path, low_memory=False)
+    def _read_file(path: str) -> pd.DataFrame:
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".xlsx":
+            return pd.read_excel(path)
+        return pd.read_csv(path, low_memory=False)
+
+    real_df = _read_file(real_path)
+    syn_df = _read_file(synthetic_path)
 
     if target_column not in real_df.columns:
         raise KeyError(f"target_column '{target_column}' not found in real data")
@@ -186,7 +192,7 @@ def attribute_inference_evaluation(
         covered_idx = syn_df[covered_mask].index
         correct_covered = 0
         for idx in covered_idx:
-            key = syn_keys.iloc[idx]
+            key = syn_keys.loc[idx]   # .loc keeps label-based access safe for any index type
             predicted = mapping.get(key, None)
             actual = syn_df.at[idx, target_column]
             if pd.isna(predicted) and pd.isna(actual):
@@ -265,6 +271,12 @@ def attribute_inference_evaluation(
         except Exception:
             top_risky_csv = None
 
+        raw_risk_score = coverage_rate * gain_over_baseline
+        # risk_score_pct: convert the raw 0-1 product to a 0-100 percentage scale so it
+        # is directly comparable with uniqueness_score_pct and overall_linkage_score_pct.
+        # We clamp to [0, 100] because gain_over_baseline can theoretically exceed 1.
+        risk_score_pct = float(min(max(raw_risk_score * 100, 0.0), 100.0))
+
         row: Dict[str, Any] = {
             "qid_set": qid_name,
             "known_columns": qid_name,
@@ -281,7 +293,8 @@ def attribute_inference_evaluation(
             "mapping_csv": mapping_csv,
             "baseline_csv": baseline_csv,
             "top_risky_groups_csv": top_risky_csv,
-            "risk_score": coverage_rate * gain_over_baseline,
+            "risk_score": raw_risk_score,          # raw 0-1 product (kept for backward compat)
+            "risk_score_pct": risk_score_pct,      # explicit 0-100 percentage scale
             "qualitative_label": (
                 "High" if (coverage_rate >= 0.5 and gain_over_baseline >= 0.05) else
                 "Moderate" if (coverage_rate >= 0.2 and gain_over_baseline >= 0.02) else

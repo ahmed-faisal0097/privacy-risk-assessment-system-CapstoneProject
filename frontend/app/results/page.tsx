@@ -79,7 +79,8 @@ interface AttrInferenceRow {
   baseline_accuracy?: number;
   gain_over_baseline?: number;
   baseline_label?: string;
-  risk_score?: number;
+  risk_score?: number;       // raw 0-1 product (legacy)
+  risk_score_pct?: number;   // explicit 0-100 percentage scale (preferred)
   qualitative_label?: string;
 }
 
@@ -170,7 +171,8 @@ function riskLevelFromPct(pct: number): RiskLevel {
 
 /**
  * Extract per-SA max risk scores from the attribute inference summary.
- * risk_score from backend is a 0-1 decimal; we convert to 0-100 here.
+ * Prefers the explicit risk_score_pct field (0-100 scale).
+ * Falls back to risk_score * 100 for older backend responses.
  */
 function getAttrInferenceScores(
   summary?: AttrInferenceSummary
@@ -180,7 +182,11 @@ function getAttrInferenceScores(
   for (const [sa, results] of Object.entries(summary)) {
     if (!Array.isArray(results)) continue;
     const scores = results
-      .map((r) => (typeof r?.risk_score === "number" ? r.risk_score * 100 : -Infinity))
+      .map((r) => {
+        if (typeof r?.risk_score_pct === "number") return r.risk_score_pct;
+        if (typeof r?.risk_score === "number") return r.risk_score * 100;
+        return -Infinity;
+      })
       .filter(isFinite);
     if (scores.length > 0) {
       out.push({ sa, scorePct: Math.max(...scores) });
@@ -319,8 +325,8 @@ function ShieldIcon() {
 
 function RowsIcon() {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
-      fill="none" stroke="#155dfc" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"
+      fill="none" stroke="#1E3A8A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
       <line x1="3" y1="9" x2="21" y2="9" />
       <line x1="3" y1="15" x2="21" y2="15" />
@@ -330,8 +336,8 @@ function RowsIcon() {
 
 function ColumnsIcon() {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
-      fill="none" stroke="#009689" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"
+      fill="none" stroke="#0891B2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
       <line x1="9" y1="3" x2="9" y2="21" />
       <line x1="15" y1="3" x2="15" y2="21" />
@@ -341,8 +347,8 @@ function ColumnsIcon() {
 
 function MissingIcon() {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
-      fill="none" stroke="#f97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"
+      fill="none" stroke="#D97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="10" />
       <line x1="12" y1="8" x2="12" y2="12" />
       <line x1="12" y1="16" x2="12.01" y2="16" />
@@ -361,8 +367,8 @@ function PlayIcon() {
 
 function DownloadIcon() {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
-      fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <polyline points="7 10 12 15 17 10" />
       <line x1="12" y1="15" x2="12" y2="3" />
@@ -382,7 +388,7 @@ function RefreshIcon() {
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <h2 className="text-[#101828] text-lg font-semibold leading-7">{children}</h2>
+    <h2 className="text-[#0F172A] text-lg font-bold leading-7 tracking-tight">{children}</h2>
   );
 }
 
@@ -390,35 +396,60 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 function PageHeader() {
   return (
     <header
-      className="relative w-full shadow-md overflow-hidden"
-      style={{ background: "linear-gradient(135deg, #0d2d78 0%, #155dfc 60%, #1a72f5 100%)" }}
+      className="relative w-full overflow-hidden"
+      style={{
+        background: "linear-gradient(135deg, #0F1F47 0%, #1E3A8A 45%, #1D4ED8 80%, #0891B2 100%)",
+        boxShadow: "0 4px 24px rgba(15,23,42,0.25)",
+      }}
     >
+      {/* Analytical dot-grid texture */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          backgroundImage:
+            "radial-gradient(circle, rgba(255,255,255,0.18) 1px, transparent 1px)",
+          backgroundSize: "28px 28px",
+          opacity: 0.35,
+        }}
+      />
+      {/* Top glow halo */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse 60% 80% at 50% -20%, rgba(255,255,255,0.12) 0%, transparent 70%)",
+            "radial-gradient(ellipse 70% 55% at 50% -10%, rgba(147,197,253,0.22) 0%, transparent 65%)",
         }}
       />
-      <div className="relative max-w-5xl mx-auto px-6 py-9 flex flex-col sm:flex-row items-center justify-center gap-4 text-center sm:text-left">
+      <div className="relative max-w-5xl mx-auto px-6 py-10 flex flex-col items-center text-center gap-4">
         <div
-          className="w-12 h-12 rounded-[12px] flex items-center justify-center shrink-0"
+          className="w-14 h-14 rounded-2xl flex items-center justify-center shrink-0"
           style={{
-            background: "rgba(255,255,255,0.15)",
-            boxShadow: "inset 0 1px 1px rgba(255,255,255,0.25), 0 2px 8px rgba(0,0,0,0.15)",
-            backdropFilter: "blur(4px)",
+            background: "rgba(255,255,255,0.10)",
+            border: "1px solid rgba(255,255,255,0.20)",
+            boxShadow:
+              "inset 0 1px 1px rgba(255,255,255,0.20), 0 4px 16px rgba(0,0,0,0.20)",
+            backdropFilter: "blur(8px)",
           }}
         >
           <ShieldIcon />
         </div>
-        <div className="flex flex-col gap-1">
-          <h1 className="text-white text-2xl font-semibold leading-8 tracking-tight drop-shadow-sm">
-            Privacy Risk Assessment System
-          </h1>
-          <p className="text-blue-200 text-sm leading-5 font-normal">
-            Evaluate privacy risks in synthetic healthcare datasets
-          </p>
+        <div
+          className="text-[10px] font-semibold tracking-[0.12em] uppercase px-3 py-1 rounded-full"
+          style={{
+            background: "rgba(255,255,255,0.10)",
+            border: "1px solid rgba(255,255,255,0.18)",
+            color: "rgba(186,230,253,0.90)",
+            backdropFilter: "blur(4px)",
+          }}
+        >
+          Healthcare Privacy Intelligence Platform
         </div>
+        <h1 className="text-white text-[28px] font-bold leading-tight tracking-tight">
+          Privacy Risk Assessment System
+        </h1>
+        <p className="text-sky-200/80 text-sm leading-6 max-w-md font-normal">
+          Enterprise-grade evaluation of privacy risks in synthetic healthcare datasets
+        </p>
       </div>
     </header>
   );
@@ -430,21 +461,28 @@ function NoDataFallback() {
     <div className="min-h-screen bg-transparent flex flex-col">
       <PageHeader />
       <main className="flex-1 flex flex-col items-center justify-center px-6 py-16">
-        <div className="w-full max-w-5xl bg-white border border-[#e5e7eb] rounded-[14px] card-shadow p-12 flex flex-col items-center gap-6 text-center">
-          <div className="bg-[#ffedd4] w-16 h-16 rounded-full flex items-center justify-center">
+        <div
+          className="w-full max-w-5xl bg-white border border-[#E2E8F0] rounded-2xl p-12 flex flex-col items-center gap-6 text-center"
+          style={{ boxShadow: "0 1px 3px rgba(15,23,42,0.04), 0 4px 16px rgba(30,58,138,0.07)" }}
+        >
+          <div className="bg-[#FFFBEB] w-16 h-16 rounded-full flex items-center justify-center">
             <MissingIcon />
           </div>
           <div className="flex flex-col gap-2">
-            <h2 className="text-[#101828] text-xl font-semibold">
+            <h2 className="text-[#0F172A] text-xl font-bold tracking-tight">
               No analysis data found.
             </h2>
-            <p className="text-[#4a5565] text-sm max-w-sm">
+            <p className="text-[#64748B] text-sm max-w-sm">
               Please upload your datasets and run the analysis from the main page first.
             </p>
           </div>
           <Link
             href="/"
-            className="bg-[#155dfc] hover:bg-[#1151d6] text-white text-sm font-medium h-10 px-5 rounded-[10px] flex items-center gap-2 transition-colors"
+            className="text-white text-sm font-semibold h-10 px-5 rounded-xl flex items-center gap-2 transition-all duration-200 hover:-translate-y-0.5"
+            style={{
+              background: "linear-gradient(135deg, #1E3A8A 0%, #2563EB 100%)",
+              boxShadow: "0 4px 14px rgba(30,58,138,0.30)",
+            }}
           >
             ← Back to Upload
           </Link>
@@ -492,13 +530,22 @@ export default function ResultsPage() {
   const resultDir = apiResult.risk_evaluation?.result_dir;
   const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
-  const handleDownloadReport = async (format: "html" | "csv") => {
+  const handleDownloadReport = async (format: "html" | "csv" | "pdf") => {
     if (!resultDir) {
       setDownloadError("Report not available — result directory missing from the analysis response.");
       return;
     }
     setDownloading(true);
     setDownloadError(null);
+
+    // This flag is set to true the moment the blob bytes are fully received.
+    // The catch block only shows an error if the blob was NOT yet received —
+    // meaning it's a genuine backend / network failure.
+    // Anything that throws AFTER blobReceived = true is a browser-side DOM
+    // quirk (Chromium PDF viewer, revokeObjectURL timing, etc.) and must be
+    // silently swallowed so the user never sees a false "backend" error.
+    let blobReceived = false;
+
     try {
       const url = `${API_BASE}/api/report/${format}?result_dir=${encodeURIComponent(resultDir)}`;
       const res = await fetch(url);
@@ -507,16 +554,37 @@ export default function ResultsPage() {
         setDownloadError(err.detail ?? `Failed to generate report (${res.status})`);
         return;
       }
+
       const blob = await res.blob();
+      blobReceived = true; // ← mark HERE, before any DOM work
+
+      // Trigger browser save-dialog. Any exception from this point on is a
+      // browser-side issue and must NOT be surfaced as a backend error.
+      const objectUrl = URL.createObjectURL(blob);
+      const filename =
+        format === "html" ? "privacy_risk_report.html"
+        : format === "csv" ? "privacy_risk_report_summary.csv"
+        : "privacy-risk-report.pdf";
       const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = format === "html" ? "privacy_risk_report.html" : "privacy_risk_report_summary.csv";
+      a.href = objectUrl;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
-      a.remove();
-      URL.revokeObjectURL(a.href);
+      document.body.removeChild(a);
+      // Delay revocation — PDFs need more time because Chromium may hand the
+      // blob to its internal viewer before starting the actual file-system write.
+      setTimeout(
+        () => { try { URL.revokeObjectURL(objectUrl); } catch { /* ignore */ } },
+        format === "pdf" ? 2000 : 300,
+      );
+
     } catch {
-      setDownloadError("Could not reach the backend to generate the report.");
+      // Only tell the user about a genuine backend / network failure.
+      if (!blobReceived) {
+        setDownloadError("Could not reach the backend to generate the report.");
+      }
+      // If blobReceived is true something threw during the DOM operations —
+      // the file was already delivered, so stay silent.
     } finally {
       setDownloading(false);
     }
@@ -531,10 +599,10 @@ export default function ResultsPage() {
         <div className="w-full max-w-5xl flex flex-col gap-8">
 
           {/* ── Section 1: Uploaded Datasets ── */}
-          <div className="bg-white border border-[#e5e7eb] rounded-[14px] card-shadow p-8 flex flex-col gap-6">
-            <div className="flex flex-col gap-2">
+          <div className="bg-white border border-[#E2E8F0] rounded-2xl card-shadow p-8 flex flex-col gap-6">
+            <div className="flex flex-col gap-1.5">
               <SectionTitle>Upload Datasets</SectionTitle>
-              <p className="text-[#4a5565] text-sm leading-5">
+              <p className="text-[#64748B] text-sm leading-5">
                 Upload both real and synthetic datasets to compare privacy risks
               </p>
             </div>
@@ -560,26 +628,26 @@ export default function ResultsPage() {
 
             {/* Real dataset */}
             <div className="flex flex-col gap-3">
-              <p className="text-xs font-semibold uppercase tracking-widest text-[#2b7fff]">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#1D4ED8]">
                 Real Dataset
               </p>
               <div className="flex flex-col sm:flex-row gap-6">
-                <SummaryCard icon={<RowsIcon />} iconBg="bg-[#dbeafe]"
+                <SummaryCard icon={<RowsIcon />} iconBg="bg-[#EFF6FF]"
                   value={results.datasetSummary.rows} label="Number of Rows" />
-                <SummaryCard icon={<ColumnsIcon />} iconBg="bg-[#cbfbf1]"
+                <SummaryCard icon={<ColumnsIcon />} iconBg="bg-[#ECFEFF]"
                   value={results.datasetSummary.columns} label="Number of Columns" />
-                <SummaryCard icon={<MissingIcon />} iconBg="bg-[#ffedd4]"
+                <SummaryCard icon={<MissingIcon />} iconBg="bg-[#FFFBEB]"
                   value={results.datasetSummary.missingValues} label="Missing Values" />
               </div>
             </div>
 
             {/* Synthetic dataset */}
             <div className="flex flex-col gap-3">
-              <p className="text-xs font-semibold uppercase tracking-widest text-[#009689]">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#0891B2]">
                 Synthetic Dataset
               </p>
               <div className="flex flex-col sm:flex-row gap-6">
-                <SummaryCard icon={<RowsIcon />} iconBg="bg-[#dbeafe]"
+                <SummaryCard icon={<RowsIcon />} iconBg="bg-[#EFF6FF]"
                   value={
                     apiResult.synthetic_file?.row_count != null
                       ? apiResult.synthetic_file.row_count.toLocaleString()
@@ -588,7 +656,7 @@ export default function ResultsPage() {
                         : "—"
                   }
                   label="Number of Rows" />
-                <SummaryCard icon={<ColumnsIcon />} iconBg="bg-[#cbfbf1]"
+                <SummaryCard icon={<ColumnsIcon />} iconBg="bg-[#ECFEFF]"
                   value={
                     apiResult.synthetic_file?.column_count != null
                       ? String(apiResult.synthetic_file.column_count)
@@ -597,7 +665,7 @@ export default function ResultsPage() {
                         : "—"
                   }
                   label="Number of Columns" />
-                <SummaryCard icon={<MissingIcon />} iconBg="bg-[#ffedd4]"
+                <SummaryCard icon={<MissingIcon />} iconBg="bg-[#FFFBEB]"
                   value={
                     apiResult._localSyntheticSummary?.missingValuePercent != null
                       ? `${apiResult._localSyntheticSummary.missingValuePercent.toFixed(1)}%`
@@ -608,39 +676,185 @@ export default function ResultsPage() {
             </div>
           </div>
 
-          {/* ── Section 3: Analysis Configuration ── */}
-          {(apiResult.quasi_identifiers?.length || apiResult.sensitive_attributes?.length) ? (
-            <div className="bg-white border border-[#e5e7eb] rounded-[14px] card-shadow p-8 flex flex-col gap-6">
-              <div className="flex flex-col gap-2">
-                <SectionTitle>Analysis Configuration</SectionTitle>
-                <p className="text-[#4a5565] text-sm leading-5">
-                  Columns selected for this analysis run
-                </p>
-              </div>
-              <div className="flex flex-col sm:flex-row gap-6">
-                {apiResult.quasi_identifiers?.length ? (
-                  <div className="flex-1 flex flex-col gap-2">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#2b7fff]">
-                      Quasi Identifiers
-                    </p>
-                    <p className="text-sm text-[#364153] leading-6">
-                      {apiResult.quasi_identifiers.join(", ")}
+          {/* ── Section 3: Analysis Configuration + Uniqueness + Inference ── */}
+          {(apiResult.quasi_identifiers?.length || apiResult.sensitive_attributes?.length) ? (() => {
+            const uniq = apiResult.risk_evaluation?.summary?.uniqueness_and_rare_combination;
+            const inferenceSummary = apiResult.risk_evaluation?.summary?.attribute_inference_summary;
+
+            /* Build one display row per sensitive attribute */
+            const inferenceRows: {
+              sa: string;
+              coverage: string;
+              attackAccuracy: string;
+              baselineAccuracy: string;
+              gainOverBaseline: string;
+              riskLevel: RiskLevel;
+            }[] = [];
+
+            if (inferenceSummary) {
+              for (const [sa, rows] of Object.entries(inferenceSummary)) {
+                if (!Array.isArray(rows) || rows.length === 0) continue;
+                /* Pick the row with the highest risk score (worst-case) */
+                const best = rows.reduce((prev, cur) => {
+                  const ps = typeof prev.risk_score_pct === "number" ? prev.risk_score_pct
+                    : typeof prev.risk_score === "number" ? prev.risk_score * 100 : 0;
+                  const cs = typeof cur.risk_score_pct === "number" ? cur.risk_score_pct
+                    : typeof cur.risk_score === "number" ? cur.risk_score * 100 : 0;
+                  return cs > ps ? cur : prev;
+                });
+
+                const fmtPct = (v?: number) =>
+                  v == null ? "—" : `${(v <= 1 ? v * 100 : v).toFixed(1)}%`;
+
+                const gain = best.gain_over_baseline;
+                const gainStr = gain == null ? "—"
+                  : `${gain >= 0 ? "+" : ""}${(gain <= 1 && gain >= -1 ? gain * 100 : gain).toFixed(1)}%`;
+
+                const label = best.qualitative_label ?? "";
+                const riskLevel: RiskLevel =
+                  backendLevelToRisk(label) ??
+                  riskLevelFromPct(
+                    typeof best.risk_score_pct === "number" ? best.risk_score_pct
+                      : typeof best.risk_score === "number" ? best.risk_score * 100 : 0
+                  );
+
+                inferenceRows.push({
+                  sa,
+                  coverage: fmtPct(best.coverage_rate),
+                  attackAccuracy: fmtPct(best.attack_accuracy_on_covered),
+                  baselineAccuracy: fmtPct(best.baseline_accuracy),
+                  gainOverBaseline: gainStr,
+                  riskLevel,
+                });
+              }
+            }
+
+            return (
+              <div
+                className="bg-white border border-[#E2E8F0] rounded-2xl overflow-hidden"
+                style={{ boxShadow: "0 1px 3px rgba(15,23,42,0.04), 0 4px 16px rgba(30,58,138,0.07)" }}
+              >
+                {/* ── Part A: QI / SA column list ── */}
+                <div className="p-8 flex flex-col gap-5">
+                  <div className="flex flex-col gap-1">
+                    <SectionTitle>Analysis Configuration</SectionTitle>
+                    <p className="text-[#64748B] text-sm leading-5">
+                      Columns selected for this analysis run
                     </p>
                   </div>
-                ) : null}
-                {apiResult.sensitive_attributes?.length ? (
-                  <div className="flex-1 flex flex-col gap-2">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#009689]">
-                      Sensitive Attributes
-                    </p>
-                    <p className="text-sm text-[#364153] leading-6">
-                      {apiResult.sensitive_attributes.join(", ")}
-                    </p>
+                  <div className="flex flex-col sm:flex-row gap-8">
+                    {apiResult.quasi_identifiers?.length ? (
+                      <div className="flex-1 flex flex-col gap-2">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#1D4ED8]">
+                          Quasi Identifiers
+                        </p>
+                        <p className="text-sm text-[#475569] leading-6">
+                          {apiResult.quasi_identifiers.join(", ")}
+                        </p>
+                      </div>
+                    ) : null}
+                    {apiResult.sensitive_attributes?.length ? (
+                      <div className="flex-1 flex flex-col gap-2">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#0891B2]">
+                          Sensitive Attributes
+                        </p>
+                        <p className="text-sm text-[#475569] leading-6">
+                          {apiResult.sensitive_attributes.join(", ")}
+                        </p>
+                      </div>
+                    ) : null}
                   </div>
+                </div>
+
+                {/* ── Part B: Uniqueness & Rare-Combination Results ── */}
+                {uniq ? (
+                  <>
+                    <div className="h-px bg-[#F1F5F9]" />
+                    <div className="p-8 flex flex-col gap-5">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#475569]">
+                        Uniqueness &amp; Rare-Combination Results
+                      </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
+                        {[
+                          {
+                            label: "Uniqueness Score",
+                            value: `${(uniq.uniqueness_score_pct ?? 0).toFixed(2)}%`,
+                          },
+                          {
+                            label: "Rare Combination Score",
+                            value: `${(uniq.rare_combination_score_pct ?? 0).toFixed(2)}%`,
+                          },
+                          {
+                            label: "Unique Records (k=1)",
+                            value: (uniq.k_one_count ?? 0).toLocaleString(),
+                          },
+                          {
+                            label: "Total Synthetic Records",
+                            value: (uniq.total_synthetic_records ?? 0).toLocaleString(),
+                          },
+                        ].map(({ label, value }) => (
+                          <div key={label} className="flex flex-col gap-1">
+                            <p className="text-xs text-[#94A3B8] leading-4">{label}</p>
+                            <p className="text-[22px] font-bold text-[#0F172A] leading-8 tracking-tight tabular-nums">
+                              {value}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+
+                {/* ── Part C: Attribute Inference Results table ── */}
+                {inferenceRows.length > 0 ? (
+                  <>
+                    <div className="h-px bg-[#F1F5F9]" />
+                    <div className="flex flex-col gap-4 p-8">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#475569]">
+                        Attribute Inference Results (Per Sensitive Attribute)
+                      </p>
+                      <div className="rounded-xl border border-[#E2E8F0] overflow-hidden">
+                        <table className="w-full text-sm border-collapse">
+                          <thead>
+                            <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
+                              {["Sensitive Attribute", "Coverage", "Attack Accuracy", "Baseline Accuracy", "Gain over Baseline", "Risk Level"].map((h) => (
+                                <th
+                                  key={h}
+                                  className="text-left text-[#475569] text-[10px] font-bold tracking-wider uppercase px-5 py-3"
+                                >
+                                  {h}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {inferenceRows.map((row, idx) => (
+                              <tr
+                                key={row.sa}
+                                className={[
+                                  idx < inferenceRows.length - 1 ? "border-b border-[#F1F5F9]" : "",
+                                  "hover:bg-[#F8FAFC] transition-colors duration-100",
+                                ].join(" ")}
+                              >
+                                <td className="px-5 py-3.5 text-[#0F172A] font-semibold">{row.sa}</td>
+                                <td className="px-5 py-3.5 text-[#475569] tabular-nums">{row.coverage}</td>
+                                <td className="px-5 py-3.5 text-[#475569] tabular-nums">{row.attackAccuracy}</td>
+                                <td className="px-5 py-3.5 text-[#475569] tabular-nums">{row.baselineAccuracy}</td>
+                                <td className="px-5 py-3.5 text-[#475569] tabular-nums font-medium">{row.gainOverBaseline}</td>
+                                <td className="px-5 py-3.5">
+                                  <RiskBadge level={row.riskLevel} />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
                 ) : null}
               </div>
-            </div>
-          ) : null}
+            );
+          })() : null}
 
           {/* ── Section 4: Privacy Risk Overview ── */}
           <div className="flex flex-col gap-4">
@@ -664,7 +878,11 @@ export default function ResultsPage() {
               <button
                 type="button"
                 onClick={() => router.push("/")}
-                className="bg-[#155dfc] hover:bg-[#1151d6] text-white text-sm font-medium h-9 px-4 rounded-[10px] flex items-center gap-2 transition-colors"
+                className="text-white text-sm font-semibold h-9 px-4 rounded-xl flex items-center gap-2 transition-all duration-200 hover:-translate-y-0.5"
+                style={{
+                  background: "linear-gradient(135deg, #1E3A8A 0%, #2563EB 100%)",
+                  boxShadow: "0 2px 8px rgba(30,58,138,0.30)",
+                }}
               >
                 <PlayIcon />
                 Run Again
@@ -680,12 +898,15 @@ export default function ResultsPage() {
           {/* ── Section 6: Variable Risk Ranking ── */}
           <div className="flex flex-col gap-4">
             <SectionTitle>Variable Risk Ranking</SectionTitle>
-            <div className="bg-white border border-[#e5e7eb] rounded-[14px] card-shadow overflow-hidden">
+            <div
+              className="bg-white border border-[#E2E8F0] rounded-2xl overflow-hidden"
+              style={{ boxShadow: "0 1px 3px rgba(15,23,42,0.04), 0 4px 16px rgba(30,58,138,0.07)" }}
+            >
               <table className="w-full text-sm border-collapse">
                 <thead>
-                  <tr className="bg-[#f9fafb] border-b border-[#e5e7eb]">
+                  <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
                     {["Rank", "Variable Name", "Risk Score", "Risk Level"].map((h) => (
-                      <th key={h} className="text-left text-[#364153] text-xs font-semibold tracking-wide uppercase px-6 py-3">
+                      <th key={h} className="text-left text-[#475569] text-xs font-semibold tracking-wider uppercase px-6 py-3.5">
                         {h}
                       </th>
                     ))}
@@ -699,13 +920,14 @@ export default function ResultsPage() {
                       <tr
                         key={row.rank}
                         className={[
-                          row.level === "High" ? "bg-[#fef2f2]" : "bg-white",
-                          !isLast ? "border-b border-[#e5e7eb]" : "",
+                          row.level === "High" ? "bg-[#FEF2F2]" : "bg-white hover:bg-[#F8FAFC]",
+                          !isLast ? "border-b border-[#F1F5F9]" : "",
+                          "transition-colors duration-100",
                         ].join(" ")}
                       >
-                        <td className="text-[#4a5565] px-6 py-4">{row.rank}</td>
-                        <td className="text-[#101828] font-medium px-6 py-4">{row.variable}</td>
-                        <td className="text-[#101828] px-6 py-4">{row.score}</td>
+                        <td className="text-[#94A3B8] font-mono px-6 py-4">{row.rank}</td>
+                        <td className="text-[#0F172A] font-semibold px-6 py-4">{row.variable}</td>
+                        <td className="text-[#475569] px-6 py-4">{row.score}</td>
                         <td className="px-6 py-4">
                           <RiskBadge level={row.level as RiskLevel} />
                         </td>
@@ -719,42 +941,77 @@ export default function ResultsPage() {
 
           {/* ── Section 7: Bottom Action Buttons ── */}
           <div className="flex flex-col items-center gap-3 pb-4">
-            <div className="flex items-center justify-center gap-4">
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              {/* Run Analysis (disabled on results page) */}
               <button
                 type="button"
                 disabled
-                className="bg-[#d1d5dc] text-white text-base font-medium h-12 px-6 rounded-[10px] flex items-center gap-2 cursor-not-allowed"
+                className="opacity-40 cursor-not-allowed text-white text-base font-semibold h-12 px-6 rounded-xl flex items-center gap-2"
+                style={{
+                  background: "linear-gradient(135deg, #1E3A8A 0%, #2563EB 100%)",
+                  boxShadow: "0 4px 14px rgba(30,58,138,0.25)",
+                }}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+                <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24"
                   fill="white" stroke="none">
                   <polygon points="5 3 19 12 5 21 5 3" />
                 </svg>
                 Run Analysis
               </button>
 
+              {/* Download HTML — healthcare cyan gradient */}
               <button
                 type="button"
                 onClick={() => handleDownloadReport("html")}
                 disabled={downloading}
-                className="bg-[#009689] hover:bg-[#007a6e] disabled:bg-[#d1d5dc] text-white text-base font-medium h-12 px-6 rounded-[10px] flex items-center gap-2 transition-colors"
+                className="text-white text-base font-semibold h-12 px-6 rounded-xl flex items-center gap-2 transition-all duration-200 hover:-translate-y-0.5 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+                style={{
+                  background: "linear-gradient(135deg, #0E7490 0%, #0891B2 100%)",
+                  boxShadow: "0 4px 14px rgba(8,145,178,0.30), inset 0 1px 0 rgba(255,255,255,0.12)",
+                }}
               >
                 <DownloadIcon />
-                {downloading ? "Generating..." : "Download Report"}
+                {downloading ? "Generating..." : "Download HTML"}
               </button>
 
+              {/* Download CSV — emerald→cyan gradient */}
               <button
                 type="button"
                 onClick={() => handleDownloadReport("csv")}
                 disabled={downloading}
-                className="bg-white hover:bg-gray-50 disabled:opacity-50 text-[#009689] text-base font-medium h-12 px-6 rounded-[10px] border border-[#009689] flex items-center gap-2 transition-colors"
+                className="text-white text-base font-semibold h-12 px-6 rounded-xl flex items-center gap-2 transition-all duration-200 hover:-translate-y-0.5 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+                style={{
+                  background: "linear-gradient(135deg, #059669 0%, #0891B2 100%)",
+                  boxShadow: "0 4px 14px rgba(5,150,105,0.28), inset 0 1px 0 rgba(255,255,255,0.12)",
+                }}
               >
                 <DownloadIcon />
                 {downloading ? "..." : "Download CSV"}
               </button>
 
+              {/* Download PDF — indigo→blue gradient */}
+              <button
+                type="button"
+                onClick={() => handleDownloadReport("pdf")}
+                disabled={downloading}
+                className="text-white text-base font-semibold h-12 px-6 rounded-xl flex items-center gap-2 transition-all duration-200 hover:-translate-y-0.5 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+                style={{
+                  background: "linear-gradient(135deg, #4338CA 0%, #2563EB 100%)",
+                  boxShadow: "0 4px 14px rgba(67,56,202,0.30), inset 0 1px 0 rgba(255,255,255,0.12)",
+                }}
+              >
+                <DownloadIcon />
+                {downloading ? "..." : "Download PDF"}
+              </button>
+
+              {/* Reset — slate gradient */}
               <Link
                 href="/"
-                className="bg-white hover:bg-gray-50 text-[#364153] text-base font-medium h-12 px-6 rounded-[10px] border border-[#d1d5dc] flex items-center gap-2 transition-colors"
+                className="text-white text-base font-medium h-12 px-6 rounded-xl flex items-center gap-2 transition-all duration-200 hover:-translate-y-0.5 hover:opacity-90"
+                style={{
+                  background: "linear-gradient(135deg, #334155 0%, #475569 100%)",
+                  boxShadow: "0 4px 14px rgba(51,65,85,0.25), inset 0 1px 0 rgba(255,255,255,0.08)",
+                }}
               >
                 <RefreshIcon />
                 Reset
@@ -762,8 +1019,13 @@ export default function ResultsPage() {
             </div>
 
             {downloadError && (
-              <div className="w-full max-w-xl bg-[#fef2f2] border border-[#fca5a5] rounded-[10px] px-5 py-3">
-                <p className="text-[#b91c1c] text-sm font-medium">{downloadError}</p>
+              <div className="w-full max-w-xl bg-[#FEF2F2] border border-[#FECACA] rounded-xl px-5 py-3 flex items-start gap-2.5">
+                <svg className="shrink-0 mt-0.5" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                <p className="text-[#DC2626] text-sm font-medium">{downloadError}</p>
               </div>
             )}
           </div>

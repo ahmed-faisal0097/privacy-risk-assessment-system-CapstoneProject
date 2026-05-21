@@ -12,25 +12,37 @@ interface UploadCardProps {
 
 const accentConfig = {
   blue: {
-    iconBg: "bg-[#dbeafe]",
-    btnBg: "bg-[#155dfc] hover:bg-[#1151d6]",
-    dragActiveBorder: "border-[#155dfc]",
-    cardBg: "bg-[#eff6ff]",
-    cardBorder: "border-[#bedbff]",
-    fileIconBg: "bg-[#155dfc]",
+    iconBg: "bg-[#EFF6FF]",
+    btnGradient: {
+      background: "linear-gradient(135deg, #1E3A8A 0%, #2563EB 100%)",
+      boxShadow: "0 2px 8px rgba(30,58,138,0.30)",
+    },
+    btnHoverClass: "hover:opacity-90",
+    dragActiveBorder: "border-[#2563EB]",
+    dragActiveBg: "bg-[#EFF6FF]",
+    cardBg: "bg-[#EFF6FF]",
+    cardBorder: "border-[#BFDBFE]",
+    fileIconBg: "bg-[#1E3A8A]",
+    titleAccent: "text-[#1E3A8A]",
   },
   teal: {
-    iconBg: "bg-[#cbfbf1]",
-    btnBg: "bg-[#009689] hover:bg-[#007a6e]",
-    dragActiveBorder: "border-[#009689]",
-    cardBg: "bg-[#f0fdfa]",
-    cardBorder: "border-[#96f7e4]",
-    fileIconBg: "bg-[#009689]",
+    iconBg: "bg-[#ECFEFF]",
+    btnGradient: {
+      background: "linear-gradient(135deg, #0E7490 0%, #0891B2 100%)",
+      boxShadow: "0 2px 8px rgba(8,145,178,0.30)",
+    },
+    btnHoverClass: "hover:opacity-90",
+    dragActiveBorder: "border-[#0891B2]",
+    dragActiveBg: "bg-[#ECFEFF]",
+    cardBg: "bg-[#ECFEFF]",
+    cardBorder: "border-[#A5F3FC]",
+    fileIconBg: "bg-[#0891B2]",
+    titleAccent: "text-[#0891B2]",
   },
 };
 
 function UploadIcon({ accent }: { accent: "blue" | "teal" }) {
-  const color = accent === "blue" ? "#155dfc" : "#009689";
+  const color = accent === "blue" ? "#1E3A8A" : "#0891B2";
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -73,8 +85,8 @@ function XIcon() {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      width="16"
-      height="16"
+      width="15"
+      height="15"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -92,8 +104,8 @@ function BrowseIcon() {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      width="16"
-      height="16"
+      width="15"
+      height="15"
       viewBox="0 0 24 24"
       fill="none"
       stroke="white"
@@ -120,7 +132,7 @@ export default function UploadCard({
   onFileSelect,
   onRemove,
 }: UploadCardProps) {
-  const { iconBg, btnBg, dragActiveBorder, cardBg, cardBorder, fileIconBg } =
+  const { iconBg, btnGradient, btnHoverClass, dragActiveBorder, dragActiveBg, cardBg, cardBorder, fileIconBg } =
     accentConfig[accent];
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -137,24 +149,25 @@ export default function UploadCard({
 
   return (
     <div className="flex flex-col gap-4 flex-1 min-w-0">
-      <h3 className="text-[#101828] text-base font-medium leading-6">{title}</h3>
+      <h3 className="text-[#0F172A] text-base font-semibold leading-6">{title}</h3>
 
       {file ? (
         /* ── Uploaded file card ── */
         <div
-          className={`${cardBg} ${cardBorder} border rounded-[10px] px-4 h-[74px] flex items-center justify-between`}
+          className={`${cardBg} ${cardBorder} border rounded-xl px-4 h-[76px] flex items-center justify-between`}
+          style={{ boxShadow: "0 1px 3px rgba(15,23,42,0.04), 0 2px 8px rgba(30,58,138,0.06)" }}
         >
           <div className="flex items-center gap-3 min-w-0">
             <div
-              className={`${fileIconBg} w-10 h-10 rounded-[10px] flex items-center justify-center shrink-0`}
+              className={`${fileIconBg} w-10 h-10 rounded-xl flex items-center justify-center shrink-0`}
             >
               <FileIcon />
             </div>
             <div className="flex flex-col min-w-0">
-              <span className="text-[#101828] text-sm font-medium leading-5 truncate">
+              <span className="text-[#0F172A] text-sm font-semibold leading-5 truncate">
                 {file.name}
               </span>
-              <span className="text-[#4a5565] text-xs leading-4">
+              <span className="text-[#64748B] text-xs leading-4">
                 {formatFileSize(file.size)}
               </span>
             </div>
@@ -163,7 +176,7 @@ export default function UploadCard({
           <button
             type="button"
             onClick={onRemove}
-            className="text-[#6a7282] hover:text-[#374151] transition-colors p-1.5 rounded-lg hover:bg-black/5 shrink-0"
+            className="text-[#94A3B8] hover:text-[#475569] transition-colors p-1.5 rounded-lg hover:bg-black/5 shrink-0"
             aria-label="Remove file"
           >
             <XIcon />
@@ -181,10 +194,10 @@ export default function UploadCard({
         /* ── Dropzone ── */
         <div
           className={[
-            "bg-[#f9fafb] border-2 border-dashed rounded-[10px] p-8 flex flex-col items-center justify-center gap-3 cursor-pointer transition-colors",
+            "bg-[#F8FAFC] border-2 border-dashed rounded-xl p-8 flex flex-col items-center justify-center gap-3 cursor-pointer transition-all duration-200",
             isDragging
-              ? `${dragActiveBorder} bg-white`
-              : "border-[#d1d5dc] hover:border-[#9ca3af]",
+              ? `${dragActiveBorder} ${dragActiveBg}`
+              : "border-[#CBD5E1] hover:border-[#94A3B8] hover:bg-white",
           ].join(" ")}
           onClick={() => inputRef.current?.click()}
           onDragOver={(e) => {
@@ -201,15 +214,16 @@ export default function UploadCard({
           </div>
 
           <div className="flex flex-col items-center gap-1 text-center">
-            <p className="text-[#364153] text-sm leading-5">
+            <p className="text-[#475569] text-sm font-medium leading-5">
               Drag and drop CSV file
             </p>
-            <p className="text-[#6a7282] text-xs leading-4">or</p>
+            <p className="text-[#94A3B8] text-xs leading-4">or</p>
           </div>
 
           <button
             type="button"
-            className={`${btnBg} text-white text-sm font-medium leading-5 px-4 h-9 rounded-[10px] flex items-center gap-2 transition-colors`}
+            className={`text-white text-sm font-semibold leading-5 px-4 h-9 rounded-xl flex items-center gap-2 transition-opacity ${btnHoverClass}`}
+            style={btnGradient}
             onClick={(e) => {
               e.stopPropagation();
               inputRef.current?.click();

@@ -1,24 +1,26 @@
 """
 M5 — Privacy Risk Assessment Report Generator
 What this file does:
-  Reads the JSON summary that algorithm produced
-  (results/syn_k_summary.json) and generates two report files:
+  Reads the JSON summary produced by the risk evaluation pipeline
+  (results/syn_k_summary.json) and generates three report files:
 
   1. results/privacy_risk_report.html
      A professional HTML audit report — coloured, formatted,
      with risk scores, tables, methodology, and recommendation.
-     Open it in any browser. Print it to get a PDF.
 
   2. results/privacy_risk_report_summary.csv
      A flat structured CSV for audit trail / record keeping.
      Each row has: section, metric name, value, notes.
 
-How to run (from project ROOT folder):
-  python -m backend.app.report.generate_report
+  3. results/privacy_risk_report.pdf
+     A structured PDF report built with reportlab (pure-Python,
+     no system dependencies).  Contains risk scores, QI/SA config,
+     group statistics, record risk counts, and linkage risk if
+     a linkage_summary.json is available in the same result directory.
 
 Dependencies:
-  None — uses only Python built-in libraries (os, json, csv, datetime).
-  No pip install needed for this file.
+  Built-ins: os, json, csv, datetime
+  Third-party: reportlab (pip install reportlab) — PDF generation only.
 ════════════════════════════════════════════════════════════════════════
 """
 from __future__ import annotations
@@ -27,6 +29,21 @@ import json
 import csv
 from datetime import datetime
 from typing import Any
+
+# reportlab is needed only for generate_pdf; imported lazily so the rest
+# of the module keeps working even if the package is not yet installed.
+try:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.colors import HexColor, white
+    from reportlab.lib.units import cm
+    from reportlab.lib.enums import TA_RIGHT
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+    )
+    _REPORTLAB_AVAILABLE = True
+except ImportError:
+    _REPORTLAB_AVAILABLE = False
 
 
 # FILE PATHS
@@ -751,6 +768,406 @@ def generate_csv(summary: dict, out_path: str) -> None:
         writer = csv.writer(f)
         writer.writerows(rows)
     print(f"CSV report saved  -> {out_path}")
+
+# PDF REPORT GENERATOR
+
+
+def generate_pdf(
+    summary: dict,
+    out_path: str,
+    linkage_data: dict | None = None,
+) -> None:
+    """
+    Build a professional single-page PDF privacy risk report using reportlab.
+
+    Parameters
+    ----------
+    summary      : dict loaded from syn_k_summary.json
+    out_path     : absolute path where the .pdf file should be written
+    linkage_data : dict loaded from linkage_summary.json (optional).
+                   When provided, a Linkage Risk section is appended.
+    """
+    if not _REPORTLAB_AVAILABLE:
+        raise RuntimeError(
+            "reportlab is not installed. Add 'reportlab' to requirements.txt "
+            "and run: pip install reportlab"
+        )
+
+    # ── Page geometry ─────────────────────────────────────────────────────────
+    LEFT = RIGHT = TOP = BOTTOM = 2 * cm
+    PAGE_W = A4[0] - LEFT - RIGHT          # usable width ≈ 17.0 cm
+
+    # ── Extract values ────────────────────────────────────────────────────────
+    uniq_pct = float(summary.get("uniqueness_score_pct", 0))
+    rare_pct = float(summary.get("rare_combination_score_pct", 0))
+    k_zero   = int(summary.get("k_zero_count", 0))
+    k_one    = int(summary.get("k_one_count", 0))
+    k_lt5    = int(summary.get("k_lt_5_count", 0))
+    total    = int(summary.get("total_synthetic_records", 0))
+    qis      = summary.get("qis_used", [])
+    sas      = summary.get("sas_used", [])
+    gs       = summary.get("qid_group_stats", {})
+
+    overall_pct = (uniq_pct + rare_pct) / 2
+    overall_lvl = _risk_level(overall_pct)
+    generated_at = datetime.now().strftime("%d %B %Y, %H:%M")
+
+    # ── Colour palette ────────────────────────────────────────────────────────
+    C_NAVY   = HexColor("#1a365d")
+    C_HIGH   = HexColor("#c53030")
+    C_MED    = HexColor("#c05621")
+    C_LOW    = HexColor("#276749")
+    C_MUTED  = HexColor("#718096")
+    C_BORDER = HexColor("#e2e8f0")
+    C_BG     = HexColor("#f7fafc")
+    C_EDF    = HexColor("#edf2f7")
+    C_WHITE  = white
+
+    def _clr(pct: float):
+        return C_HIGH if pct >= 20 else C_MED if pct >= 10 else C_LOW
+
+    def _bg(pct: float):
+        return (HexColor("#fff5f5") if pct >= 20
+                else HexColor("#fffaf0") if pct >= 10
+                else HexColor("#f0fff4"))
+
+    # ── Paragraph styles ──────────────────────────────────────────────────────
+    def _ps(name, **kw):
+        # Defaults that callers can override by passing the same key in kw
+        defaults = dict(fontName="Helvetica", fontSize=10, leading=14,
+                        textColor=HexColor("#1a202c"))
+        defaults.update(kw)
+        return ParagraphStyle(name, **defaults)
+
+    s_hdr  = _ps("Hdr",  fontName="Helvetica-Bold", fontSize=16,
+                 textColor=C_WHITE, leading=20)
+    s_sub  = _ps("Sub",  fontSize=9, textColor=HexColor("#a0aec0"), leading=12)
+    s_sec  = _ps("Sec",  fontName="Helvetica-Bold", fontSize=11,
+                 textColor=C_NAVY, spaceBefore=14, spaceAfter=6)
+    s_body = _ps("Body", spaceAfter=4)
+    s_bold = _ps("Bold", fontName="Helvetica-Bold")
+    s_th   = _ps("TH",   fontName="Helvetica-Bold", fontSize=9,
+                 textColor=C_WHITE)
+    s_td   = _ps("TD",   fontSize=9, leading=12)
+    s_td_r = _ps("TDR",  fontSize=9, leading=12, alignment=TA_RIGHT)
+
+    def _risk_style(name, pct):
+        return _ps(name, fontName="Helvetica-Bold", fontSize=9,
+                   textColor=_clr(pct))
+
+    def _tbl_style(n_rows: int, last_bold: bool = False) -> TableStyle:
+        """Navy header + alternating data rows + optional bold last row."""
+        cmds = [
+            ("BACKGROUND",   (0, 0), (-1, 0),  C_NAVY),
+            ("GRID",         (0, 0), (-1, -1),  0.5, C_BORDER),
+            ("VALIGN",       (0, 0), (-1, -1),  "MIDDLE"),
+            ("LEFTPADDING",  (0, 0), (-1, -1),  10),
+            ("RIGHTPADDING", (0, 0), (-1, -1),  10),
+            ("TOPPADDING",   (0, 0), (-1, -1),  6),
+            ("BOTTOMPADDING",(0, 0), (-1, -1),  6),
+        ]
+        for i in range(1, n_rows):
+            cmds.append(("BACKGROUND", (0, i), (-1, i),
+                         C_WHITE if i % 2 == 1 else C_BG))
+        if last_bold and n_rows > 1:
+            cmds.append(("BACKGROUND", (0, n_rows - 1), (-1, n_rows - 1), C_EDF))
+        return TableStyle(cmds)
+
+    # ── Story ─────────────────────────────────────────────────────────────────
+    story: list = []
+
+    dir_path = os.path.dirname(out_path)
+    if dir_path:
+        os.makedirs(dir_path, exist_ok=True)
+
+    doc = SimpleDocTemplate(
+        out_path,
+        pagesize=A4,
+        leftMargin=LEFT, rightMargin=RIGHT,
+        topMargin=TOP,   bottomMargin=BOTTOM,
+        title="Privacy Risk Assessment Report",
+        author="Privacy Risk Assessment System",
+    )
+
+    # 1 ── Header ──────────────────────────────────────────────────────────────
+    hdr_tbl = Table(
+        [
+            [Paragraph("Privacy Risk Assessment Report", s_hdr)],
+            [Paragraph(
+                f"Generated: {generated_at}  ·  "
+                "Capstone Project — Western Sydney University", s_sub)],
+        ],
+        colWidths=[PAGE_W],
+    )
+    hdr_tbl.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), C_NAVY),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 18),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 18),
+        ("TOPPADDING",    (0, 0), (-1, 0),  14),
+        ("BOTTOMPADDING", (0, 0), (-1, 0),  4),
+        ("BOTTOMPADDING", (0, 1), (-1, 1),  14),
+    ]))
+    story.append(hdr_tbl)
+    story.append(Spacer(1, 0.35 * cm))
+
+    # 2 ── Overall verdict ─────────────────────────────────────────────────────
+    story.append(Paragraph("Overall Privacy Risk Verdict", s_sec))
+
+    v_color = _clr(overall_pct)
+    v_bg    = _bg(overall_pct)
+    verdict_tbl = Table(
+        [[
+            Paragraph(
+                f"<b>{overall_lvl} RISK</b>",
+                _ps("VT", fontName="Helvetica-Bold", fontSize=13,
+                    textColor=v_color, leading=16)
+            ),
+            Paragraph(
+                f"Overall Score: <b>{overall_pct:.2f}%</b><br/>"
+                f"Uniqueness: {uniq_pct:.2f}% ({_risk_level(uniq_pct)})  |  "
+                f"Rare Combination: {rare_pct:.2f}% ({_risk_level(rare_pct)})",
+                _ps("VD", fontSize=10, leading=14,
+                    textColor=HexColor("#1a202c"))
+            ),
+        ]],
+        colWidths=[3.8 * cm, PAGE_W - 3.8 * cm],
+    )
+    verdict_tbl.setStyle(TableStyle([
+        ("BACKGROUND",   (0, 0), (-1, -1), v_bg),
+        ("LINEABOVE",    (0, 0), (-1, 0),   2, v_color),
+        ("LINEBELOW",    (0, -1),(-1, -1),  2, v_color),
+        ("LINEBEFORE",   (0, 0), (0, -1),   2, v_color),
+        ("LINEAFTER",    (-1, 0),(-1, -1),  2, v_color),
+        ("VALIGN",       (0, 0), (-1, -1),  "MIDDLE"),
+        ("LEFTPADDING",  (0, 0), (-1, -1),  14),
+        ("RIGHTPADDING", (0, 0), (-1, -1),  14),
+        ("TOPPADDING",   (0, 0), (-1, -1),  10),
+        ("BOTTOMPADDING",(0, 0), (-1, -1),  10),
+    ]))
+    story.append(verdict_tbl)
+    story.append(Spacer(1, 0.3 * cm))
+
+    # 3 ── Risk score breakdown ────────────────────────────────────────────────
+    story.append(Paragraph("Risk Score Breakdown", s_sec))
+
+    score_rows = [
+        [Paragraph("Metric", s_th), Paragraph("Score", s_th),
+         Paragraph("Level", s_th)],
+        [Paragraph("Uniqueness Score", s_td),
+         Paragraph(f"{uniq_pct:.2f}%", s_td_r),
+         Paragraph(_risk_level(uniq_pct), _risk_style("SU", uniq_pct))],
+        [Paragraph("Rare Combination Score", s_td),
+         Paragraph(f"{rare_pct:.2f}%", s_td_r),
+         Paragraph(_risk_level(rare_pct), _risk_style("SR", rare_pct))],
+    ]
+    if linkage_data:
+        l_score = float(linkage_data.get("overall_linkage_score_pct", 0))
+        l_level = linkage_data.get("risk_level", _risk_level(l_score))
+        score_rows.append([
+            Paragraph("Linkage / Re-identification Score", s_td),
+            Paragraph(f"{l_score:.2f}%", s_td_r),
+            Paragraph(l_level, _risk_style("SL", l_score)),
+        ])
+    score_rows.append([
+        Paragraph("<b>Overall Risk Score</b>", s_bold),
+        Paragraph(f"<b>{overall_pct:.2f}%</b>",
+                  _ps("OP", fontName="Helvetica-Bold", fontSize=9,
+                      alignment=TA_RIGHT)),
+        Paragraph(f"<b>{overall_lvl}</b>",
+                  _ps("OL", fontName="Helvetica-Bold", fontSize=9,
+                      textColor=v_color)),
+    ])
+
+    score_tbl = Table(
+        score_rows,
+        colWidths=[PAGE_W * 0.56, PAGE_W * 0.24, PAGE_W * 0.20],
+    )
+    score_tbl.setStyle(_tbl_style(len(score_rows), last_bold=True))
+    story.append(score_tbl)
+    story.append(Spacer(1, 0.3 * cm))
+
+    # 4 ── Evaluation configuration ────────────────────────────────────────────
+    story.append(Paragraph("Evaluation Configuration", s_sec))
+    story.append(Paragraph(
+        f"<b>Quasi-Identifiers:</b>  {', '.join(qis) if qis else '—'}",
+        s_body))
+    story.append(Paragraph(
+        f"<b>Sensitive Attributes:</b>  {', '.join(sas) if sas else '—'}",
+        s_body))
+    story.append(Spacer(1, 0.15 * cm))
+
+    # 5 ── QI group statistics ─────────────────────────────────────────────────
+    story.append(Paragraph("QI Group Statistics (Real Dataset)", s_sec))
+
+    u_rate = gs.get("unique_row_rate", 0)
+    g_lt5_rate = gs.get("rows_in_groups_lt_5_rate", 0)
+    gs_rows = [
+        [Paragraph("Metric", s_th), Paragraph("Value", s_th)],
+        [Paragraph("Real dataset rows", s_td),
+         Paragraph(_fmt_num(gs.get("n_rows", "—")), s_td_r)],
+        [Paragraph("Unique QI combinations (groups)", s_td),
+         Paragraph(_fmt_num(gs.get("n_groups", "—")), s_td_r)],
+        [Paragraph("Smallest group size", s_td),
+         Paragraph(_fmt_num(gs.get("min_group_size", "—")), s_td_r)],
+        [Paragraph("Median group size", s_td),
+         Paragraph(str(gs.get("median_group_size", "—")), s_td_r)],
+        [Paragraph("Largest group size", s_td),
+         Paragraph(_fmt_num(gs.get("max_group_size", "—")), s_td_r)],
+        [Paragraph("Unique real rows (k=1)", s_td),
+         Paragraph(
+             f"{_fmt_num(gs.get('unique_rows', '—'))} "
+             f"({float(u_rate) * 100:.2f}%)", s_td_r)],
+        [Paragraph("Real rows in groups with k<5", s_td),
+         Paragraph(
+             f"{_fmt_num(gs.get('rows_in_groups_lt_5', '—'))} "
+             f"({float(g_lt5_rate) * 100:.2f}%)", s_td_r)],
+    ]
+    gs_tbl = Table(gs_rows, colWidths=[PAGE_W * 0.65, PAGE_W * 0.35])
+    gs_tbl.setStyle(_tbl_style(len(gs_rows)))
+    story.append(gs_tbl)
+    story.append(Spacer(1, 0.3 * cm))
+
+    # 6 ── Synthetic record risk counts ────────────────────────────────────────
+    story.append(Paragraph("Synthetic Record Risk Counts", s_sec))
+
+    k_safe = total - k_lt5
+    cnt_rows = [
+        [Paragraph("Category", s_th), Paragraph("Count", s_th),
+         Paragraph("% of Total", s_th), Paragraph("Risk", s_th)],
+        [Paragraph("k=0  No match in real data", s_td),
+         Paragraph(_fmt_num(k_zero), s_td_r),
+         Paragraph(_fmt_pct(k_zero / total * 100 if total else 0), s_td_r),
+         Paragraph("HIGH", _ps("CH", fontName="Helvetica-Bold",
+                               fontSize=9, textColor=C_HIGH))],
+        [Paragraph("k=1  Unique (maps to exactly 1 real person)", s_td),
+         Paragraph(_fmt_num(k_one), s_td_r),
+         Paragraph(_fmt_pct(uniq_pct), s_td_r),
+         Paragraph(_risk_level(uniq_pct), _risk_style("CU", uniq_pct))],
+        [Paragraph("k<5  Rare (fewer than 5 real matches)", s_td),
+         Paragraph(_fmt_num(k_lt5), s_td_r),
+         Paragraph(_fmt_pct(rare_pct), s_td_r),
+         Paragraph(_risk_level(rare_pct), _risk_style("CR", rare_pct))],
+        [Paragraph("k>=5  Safe (sufficient real coverage)", s_td),
+         Paragraph(_fmt_num(k_safe), s_td_r),
+         Paragraph(_fmt_pct(k_safe / total * 100 if total else 0), s_td_r),
+         Paragraph("LOW", _ps("CL", fontName="Helvetica-Bold",
+                              fontSize=9, textColor=C_LOW))],
+        [Paragraph("<b>Total synthetic records evaluated</b>", s_bold),
+         Paragraph(f"<b>{_fmt_num(total)}</b>",
+                   _ps("CT", fontName="Helvetica-Bold", fontSize=9,
+                       alignment=TA_RIGHT)),
+         Paragraph("<b>100.00%</b>",
+                   _ps("CT2", fontName="Helvetica-Bold", fontSize=9,
+                       alignment=TA_RIGHT)),
+         Paragraph("—", s_td)],
+    ]
+    cnt_tbl = Table(
+        cnt_rows,
+        colWidths=[PAGE_W * 0.44, PAGE_W * 0.15,
+                   PAGE_W * 0.15, PAGE_W * 0.26],
+    )
+    cnt_tbl.setStyle(_tbl_style(len(cnt_rows), last_bold=True))
+    story.append(cnt_tbl)
+    story.append(Spacer(1, 0.3 * cm))
+
+    # 7 ── Linkage risk (optional) ─────────────────────────────────────────────
+    if linkage_data:
+        story.append(Paragraph("Linkage / Re-identification Risk", s_sec))
+        l_total_r = int(linkage_data.get("total_synthetic_records", 0))
+        l_score = float(linkage_data.get("overall_linkage_score_pct", 0))
+        l_level = linkage_data.get("risk_level", _risk_level(l_score))
+        l_sum   = linkage_data.get("risk_summary", "")
+        if l_sum:
+            story.append(Paragraph(l_sum, s_body))
+
+        exact   = linkage_data.get("exact_match", {})
+        hamming = linkage_data.get("hamming_nearest_neighbour", {})
+        lnk_rows = [
+            [Paragraph("Method", s_th), Paragraph("Score", s_th),
+             Paragraph("Risk", s_th)],
+        ]
+        if exact:
+            e_s = float(exact.get("exact_match_score_pct", 0))
+            lnk_rows.append([
+                Paragraph("Exact Match Linkage", s_td),
+                Paragraph(f"{e_s:.2f}%", s_td_r),
+                Paragraph(_risk_level(e_s), _risk_style("LE", e_s)),
+            ])
+        if hamming:
+            h_s = float(hamming.get("hamming_score_pct", 0))
+            lnk_rows.append([
+                Paragraph("Hamming Nearest-Neighbour Linkage", s_td),
+                Paragraph(f"{h_s:.2f}%", s_td_r),
+                Paragraph(_risk_level(h_s), _risk_style("LH", h_s)),
+            ])
+        lnk_rows.append([
+            Paragraph("<b>Overall Linkage Score</b>", s_bold),
+            Paragraph(f"<b>{l_score:.2f}%</b>",
+                      _ps("LO", fontName="Helvetica-Bold", fontSize=9,
+                          alignment=TA_RIGHT)),
+            Paragraph(f"<b>{l_level}</b>",
+                      _ps("LL", fontName="Helvetica-Bold", fontSize=9,
+                          textColor=_clr(l_score))),
+        ])
+        lnk_tbl = Table(
+            lnk_rows,
+            colWidths=[PAGE_W * 0.56, PAGE_W * 0.24, PAGE_W * 0.20],
+        )
+        lnk_tbl.setStyle(_tbl_style(len(lnk_rows), last_bold=True))
+        story.append(lnk_tbl)
+        story.append(Spacer(1, 0.3 * cm))
+
+    # 8 ── Risk level thresholds ───────────────────────────────────────────────
+    story.append(Paragraph("Risk Level Thresholds", s_sec))
+    thr_rows = [
+        [Paragraph("Level", s_th), Paragraph("Range", s_th),
+         Paragraph("Meaning", s_th), Paragraph("Recommended Action", s_th)],
+        [Paragraph("HIGH",   _ps("TH", fontName="Helvetica-Bold",
+                                 fontSize=9, textColor=C_HIGH)),
+         Paragraph(">= 20%", s_td_r),
+         Paragraph("Many synthetic records uniquely map to real individuals",
+                   s_td),
+         Paragraph("Do NOT release — apply generalisation or DP", s_td)],
+        [Paragraph("MEDIUM", _ps("TM", fontName="Helvetica-Bold",
+                                 fontSize=9, textColor=C_MED)),
+         Paragraph("10–19.99%", s_td_r),
+         Paragraph("Some records have limited real-data coverage", s_td),
+         Paragraph("Apply caution — restrict access or anonymise", s_td)],
+        [Paragraph("LOW",    _ps("TL", fontName="Helvetica-Bold",
+                                 fontSize=9, textColor=C_LOW)),
+         Paragraph("< 10%", s_td_r),
+         Paragraph("Most records have sufficient real-data coverage", s_td),
+         Paragraph("Generally safe — review other risk dimensions", s_td)],
+    ]
+    thr_tbl = Table(
+        thr_rows,
+        colWidths=[PAGE_W * 0.10, PAGE_W * 0.12,
+                   PAGE_W * 0.38, PAGE_W * 0.40],
+    )
+    thr_tbl.setStyle(_tbl_style(len(thr_rows)))
+    story.append(thr_tbl)
+    story.append(Spacer(1, 0.5 * cm))
+
+    # 9 ── Footer ─────────────────────────────────────────────────────────────
+    ftr_tbl = Table(
+        [[Paragraph(
+            "Privacy Risk Assessment System  ·  Capstone Project  ·  "
+            "Western Sydney University",
+            _ps("Ftr", fontSize=8, textColor=C_WHITE)
+        )]],
+        colWidths=[PAGE_W],
+    )
+    ftr_tbl.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), C_NAVY),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 18),
+        ("TOPPADDING",    (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.append(ftr_tbl)
+
+    doc.build(story)
+    print(f"PDF report saved -> {out_path}")
+
 
 # MAIN ENTRY POINT
 

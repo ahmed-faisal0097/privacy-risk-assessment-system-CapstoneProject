@@ -14,8 +14,8 @@ function PlayIcon() {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      width="20"
-      height="20"
+      width="17"
+      height="17"
       viewBox="0 0 24 24"
       fill="white"
       stroke="none"
@@ -29,8 +29,8 @@ function RefreshIcon() {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      width="20"
-      height="20"
+      width="17"
+      height="17"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -58,11 +58,18 @@ export default function ActionButtons({
         onClick={onRunAnalysis}
         disabled={btnDisabled}
         className={[
-          "text-white text-base font-medium leading-6 h-12 px-6 rounded-[10px] flex items-center gap-2 transition-colors",
-          btnDisabled
-            ? "bg-[#7aabfe] cursor-not-allowed"
-            : "bg-[#155dfc] hover:bg-[#1151d6]",
+          "text-white text-base font-semibold h-12 px-7 rounded-xl flex items-center gap-2.5 transition-all duration-200",
+          btnDisabled ? "opacity-50 cursor-not-allowed" : "hover:-translate-y-0.5",
         ].join(" ")}
+        style={
+          btnDisabled
+            ? { background: "#1E3A8A" }
+            : {
+                background: "linear-gradient(135deg, #1E3A8A 0%, #2563EB 100%)",
+                boxShadow:
+                  "0 4px 14px rgba(30,58,138,0.35), inset 0 1px 0 rgba(255,255,255,0.12)",
+              }
+        }
       >
         <PlayIcon />
         {isSubmitting ? "Running..." : "Run Analysis"}
@@ -72,7 +79,11 @@ export default function ActionButtons({
         type="button"
         onClick={onReset}
         disabled={isSubmitting}
-        className="bg-white hover:bg-gray-50 disabled:opacity-50 text-[#364153] text-base font-medium leading-6 h-12 px-6 rounded-[10px] border border-[#d1d5dc] flex items-center gap-2 transition-colors"
+        className="disabled:opacity-50 text-white text-base font-medium h-12 px-6 rounded-xl flex items-center gap-2.5 transition-all duration-200 hover:-translate-y-0.5 hover:opacity-90 disabled:hover:translate-y-0"
+        style={{
+          background: "linear-gradient(135deg, #334155 0%, #475569 100%)",
+          boxShadow: "0 4px 14px rgba(51,65,85,0.25), inset 0 1px 0 rgba(255,255,255,0.08)",
+        }}
       >
         <RefreshIcon />
         Reset

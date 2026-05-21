@@ -2,11 +2,15 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"], weight: ["400", "500", "600"] });
+const inter = Inter({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-inter",
+});
 
 export const metadata: Metadata = {
   title: "Privacy Risk Assessment System",
-  description: "Evaluate privacy risks in synthetic healthcare datasets",
+  description: "Enterprise-grade privacy risk evaluation for synthetic healthcare datasets",
 };
 
 export default function RootLayout({

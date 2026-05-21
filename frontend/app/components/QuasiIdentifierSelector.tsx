@@ -48,14 +48,35 @@ export default function QuasiIdentifierSelector({
   disabled = false,
 }: QuasiIdentifierSelectorProps) {
   return (
-    <div className="w-full max-w-5xl bg-white border border-[#e5e7eb] rounded-[14px] shadow-sm p-8 flex flex-col gap-5">
-      <div className="flex flex-col gap-2">
-        <h2 className="text-[#101828] text-lg font-semibold leading-7">
-          Select Quasi Identifiers
-        </h2>
-        <p className="text-[#4a5565] text-sm leading-5">
-          Choose the attributes that may act as quasi-identifiers for privacy risk evaluation
-        </p>
+    <div
+      className="w-full max-w-5xl bg-white rounded-2xl p-8 flex flex-col gap-5"
+      style={{
+        borderLeft: "4px solid #1E3A8A",
+        border: "1px solid #E2E8F0",
+        borderLeftWidth: "4px",
+        borderLeftColor: "#1E3A8A",
+        boxShadow: "0 1px 3px rgba(15,23,42,0.04), 0 4px 16px rgba(30,58,138,0.07)",
+      }}
+    >
+      {/* Header */}
+      <div className="flex items-start gap-3">
+        <div
+          className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
+          style={{ background: "#EFF6FF", border: "1px solid #BFDBFE" }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1E3A8A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+        </div>
+        <div className="flex flex-col gap-1">
+          <h2 className="text-[#0F172A] text-lg font-bold leading-7 tracking-tight">
+            Select Quasi Identifiers
+          </h2>
+          <p className="text-[#64748B] text-sm leading-5">
+            Choose the attributes that may act as quasi-identifiers for privacy risk evaluation
+          </p>
+        </div>
       </div>
 
       <MultiSelectDropdown
@@ -69,14 +90,14 @@ export default function QuasiIdentifierSelector({
       />
 
       {conflicting.length > 0 && (
-        <div className="flex items-start gap-2 bg-[#fef2f2] border border-[#fca5a5] rounded-[8px] px-4 py-3">
+        <div className="flex items-start gap-2.5 bg-[#FEF2F2] border border-[#FECACA] rounded-xl px-4 py-3">
           <svg
             className="shrink-0 mt-0.5"
             width="14"
             height="14"
             viewBox="0 0 24 24"
             fill="none"
-            stroke="#b91c1c"
+            stroke="#DC2626"
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -85,7 +106,7 @@ export default function QuasiIdentifierSelector({
             <line x1="12" y1="8" x2="12" y2="12" />
             <line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
-          <p className="text-[#b91c1c] text-xs leading-5">
+          <p className="text-[#DC2626] text-xs leading-5">
             <span className="font-semibold">Overlap detected:</span>{" "}
             {conflicting.map((v) => {
               const opt = quasiIdentifierOptions.find((o) => o.value === v);
@@ -96,7 +117,7 @@ export default function QuasiIdentifierSelector({
         </div>
       )}
 
-      <p className="text-[#6a7282] text-xs leading-4">
+      <p className="text-[#94A3B8] text-xs leading-4">
         Selected attributes will be used to calculate re-identification risk
       </p>
     </div>

@@ -114,12 +114,18 @@ async def risk_evaluation(
     attr_files: Dict[str, str] = {}
     attr_summaries: Dict[str, Any] = {}
 
+    def _read_header(path: str) -> list:
+        """Read only the column headers from a CSV or XLSX file."""
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".xlsx":
+            return pd.read_excel(path, nrows=0).columns.tolist()
+        return pd.read_csv(path, nrows=0).columns.tolist()
+
     # Read only headers once to validate sensitive attributes (target columns)
-    # cheaply before launching potentially expensive evaluations. We read
-    # zero rows (nrows=0) so only the CSV header is parsed.
+    # cheaply before launching potentially expensive evaluations.
     try:
-        real_columns = pd.read_csv(real_path, nrows=0).columns.tolist()
-        syn_columns = pd.read_csv(synthetic_path, nrows=0).columns.tolist()
+        real_columns = _read_header(real_path)
+        syn_columns = _read_header(synthetic_path)
     except Exception as e:
         # If we cannot read headers, record the error for every SA and
         # return early so callers can see the failure without intermittent
