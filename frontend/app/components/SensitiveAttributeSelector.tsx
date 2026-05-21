@@ -13,6 +13,8 @@ export const sensitiveAttributeOptions: SelectOption[] = [
   { label: "Primary Diagnosis", value: "diag_1" },
   { label: "Secondary Diagnosis", value: "diag_2" },
   { label: "Tertiary Diagnosis", value: "diag_3" },
+  { label: "Number of Medications", value: "num_medications" },
+  { label: "Number of Lab Procedures", value: "num_lab_procedures" },
   { label: "Max Glucose Serum", value: "max_glu_serum" },
   { label: "A1C Result", value: "A1Cresult" },
   { label: "Metformin", value: "metformin" },
@@ -43,7 +45,8 @@ export const sensitiveAttributeOptions: SelectOption[] = [
   { label: "Readmitted", value: "readmitted" },
 ];
 
-export const DEFAULT_SENSITIVE_ATTRIBUTES = ["diag_1", "diag_2", "readmitted"];
+// Matches backend DEFAULT_SAS in backend/app/validation.py
+export const DEFAULT_SENSITIVE_ATTRIBUTES = ["diag_1", "num_medications", "num_lab_procedures"];
 
 export default function SensitiveAttributeSelector({
   selected,

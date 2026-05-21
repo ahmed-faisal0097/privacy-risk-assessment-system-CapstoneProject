@@ -13,7 +13,7 @@ import SensitiveAttributeSelector, {
 } from "@/app/components/SensitiveAttributeSelector";
 import AnalysisProgressSection from "@/app/components/AnalysisProgressSection";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
 /* ── Progress stages ──────────────────────────────────────────────────────── */
 const PROGRESS_STAGES = [
@@ -252,7 +252,16 @@ export default function Home() {
       setProgress(100);
       setProgressStatus("Preparing results...");
 
-      sessionStorage.setItem("analysisResult", JSON.stringify(data));
+      // Merge local client-side CSV summaries into the payload so the
+      // results page can display missing-value % without a backend field.
+      sessionStorage.setItem(
+        "analysisResult",
+        JSON.stringify({
+          ...data,
+          _localRealSummary: realSummary ?? null,
+          _localSyntheticSummary: syntheticSummary ?? null,
+        })
+      );
       navigating = true;
 
       progressTimers.current.push(

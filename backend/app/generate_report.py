@@ -648,7 +648,7 @@ def generate_html(summary: dict, out_path: str) -> None:
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf8") as f:
         f.write(html)
-    print(f"HTML report saved → {out_path}")
+    print(f"HTML report saved -> {out_path}")
 
 # CSV REPORT GENERATOR
 
@@ -750,7 +750,7 @@ def generate_csv(summary: dict, out_path: str) -> None:
     with open(out_path, "w", newline="", encoding="utf8") as f:
         writer = csv.writer(f)
         writer.writerows(rows)
-    print(f"CSV report saved  → {out_path}")
+    print(f"CSV report saved  -> {out_path}")
 
 # MAIN ENTRY POINT
 
@@ -774,11 +774,11 @@ def generate_all() -> None:
 
     print()
     print("Done! Both reports saved to results/ folder:")
-    print(f"  HTML → {HTML_OUT}")
-    print(f"  CSV  → {CSV_OUT}")
+    print(f"  HTML -> {HTML_OUT}")
+    print(f"  CSV  -> {CSV_OUT}")
     print()
     print("View HTML report in browser:")
-    print("  http://localhost:8000/api/report/html")
+    print("  http://localhost:8000/api/report/html")  
     print("  OR just double-click results/privacy_risk_report.html")
 
 

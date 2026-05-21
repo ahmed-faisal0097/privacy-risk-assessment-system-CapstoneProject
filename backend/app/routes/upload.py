@@ -9,7 +9,7 @@ from app.services.validate import (
     extract_columns,
     validate_quasi_and_sensitive_attributes,
 )
-from app.validation import DEFAULT_QIS, DEFAULT_SAS
+
 from app.services.risk_evaluation import risk_evaluation
 from app.database import get_async_db
 from app.repositories import (
@@ -109,15 +109,14 @@ async def upload_datasets(
             f"{len(synthetic_columns)} columns - {synthetic_columns[:5]}..."
         )
 
-        logger.info("Validating quasi-identifiers and sensitive attributes (using server defaults)...")
+        logger.info("Validating quasi-identifiers and sensitive attributes (using submitted values)...")
 
-        # Use server-side defaults for QIs and SAs to ensure consistent
-        # evaluation regardless of frontend input. This also simplifies
-        # testing and ensures both uniqueness and attribute-inference use
-        # the same columns.
+        # Use the QIs and SAs submitted by the frontend so user selections
+        # are honoured. Falls back gracefully via validate_quasi_and_sensitive_attributes
+        # which filters out any attributes missing from the uploaded files.
         validated_fields = validate_quasi_and_sensitive_attributes(
-            quasi_identifiers=DEFAULT_QIS,
-            sensitive_attributes=DEFAULT_SAS,
+            quasi_identifiers=quasi_identifiers,
+            sensitive_attributes=sensitive_attributes,
             real_columns=real_columns,
             synthetic_columns=synthetic_columns,
         )

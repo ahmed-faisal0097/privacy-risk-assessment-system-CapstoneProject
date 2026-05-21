@@ -11,10 +11,11 @@ import ResultsCharts from "@/app/components/ResultsCharts";
 import { mockResults } from "@/app/results/mockData";
 import type { AnalysisResults, RiskLevel } from "@/app/results/mockData";
 
-// ─── API response type ────────────────────────────────────────────────────────
-// Shape of the nested file object returned by POST /api/upload.
+// ─── Typed shapes mirroring the backend response ─────────────────────────────
+
 interface FileInfo {
-  file_uuid?: string;
+  dataset_id?: string;
+  file_name?: string;
   original_filename?: string;
   stored_filename?: string;
   path?: string;
@@ -25,63 +26,284 @@ interface FileInfo {
   columns?: string[];
 }
 
-// Shape returned by POST /api/upload.
-// Fields that aren't yet provided by the backend fall back to mock values.
-interface ApiResult {
-  // Dataset info — now nested FileInfo objects
-  real_file?: FileInfo;
-  synthetic_file?: FileInfo;
-  // Selections echoed back
-  quasi_identifiers?: string[];
-  sensitive_attributes?: string[];
-  // Risk results (may not exist yet — kept as mock if absent)
-  risk_overview?: AnalysisResults["riskOverview"];
-  variable_risk_chart?: AnalysisResults["variableRiskChart"];
-  age_group_chart?: AnalysisResults["ageGroupChart"];
-  variable_risk_ranking?: AnalysisResults["variableRiskRanking"];
+interface UniquenessResult {
+  total_synthetic_records?: number;
+  k_zero_count?: number;
+  k_one_count?: number;
+  k_lt_5_count?: number;
+  uniqueness_score_pct?: number;
+  rare_combination_score_pct?: number;
+  qis_requested?: string[];
+  qis_used?: string[];
+  sas_used?: string[];
+  qid_group_stats?: Record<string, unknown>;
 }
 
-// Format raw byte count into a readable string.
+interface LinkageResult {
+  risk_type?: string;
+  total_synthetic_records?: number;
+  qis_used?: string[];
+  exact_match?: {
+    exact_total_synthetic_records?: number;
+    exact_no_match_count?: number;
+    exact_unique_match_count?: number;
+    exact_small_group_match_count?: number;
+    exact_ambiguous_match_count?: number;
+    exact_match_score_pct?: number;
+  };
+  hamming_nearest_neighbour?: {
+    hamming_total_synthetic_records?: number;
+    hamming_high_risk_close_match_count?: number;
+    hamming_medium_risk_close_match_count?: number;
+    hamming_low_risk_distant_match_count?: number;
+    hamming_score_pct?: number;
+    hamming_high_threshold?: number;
+    hamming_medium_threshold?: number;
+  };
+  exact_match_score_pct?: number;
+  hamming_score_pct?: number;
+  overall_linkage_score_pct?: number;
+  risk_level?: string;
+  risk_summary?: string;
+}
+
+interface AttrInferenceRow {
+  qid_set?: string;
+  known_columns?: string;
+  target_column?: string;
+  n_real_eval_rows?: number;
+  n_qid_groups?: number;
+  coverage_rate?: number;
+  attack_accuracy_on_covered?: number;
+  overall_accuracy_with_baseline_fallback?: number;
+  baseline_accuracy?: number;
+  gain_over_baseline?: number;
+  baseline_label?: string;
+  risk_score?: number;
+  qualitative_label?: string;
+}
+
+type AttrInferenceSA = AttrInferenceRow[] | { error: string };
+type AttrInferenceSummary = Record<string, AttrInferenceSA>;
+
+interface RiskEvaluationSummary {
+  uniqueness_and_rare_combination?: UniquenessResult;
+  linkage_reidentification?: LinkageResult;
+  attribute_inference_summary?: AttrInferenceSummary;
+}
+
+interface RiskEvaluation {
+  real_uuid?: string;
+  synthetic_uuid?: string;
+  qi_list?: string[];
+  sa_list?: string[];
+  result_dir?: string;
+  files?: {
+    syn_flags?: string;
+    syn_per_record?: string;
+    summary_json?: string;
+    qid_group_stats?: string;
+    linkage_per_record?: string;
+    linkage_summary?: string;
+    attribute_inference_files?: Record<string, string>;
+  };
+  summary?: RiskEvaluationSummary;
+}
+
+/** Client-side CSV parse result stored alongside the API response in sessionStorage. */
+interface LocalCsvSummary {
+  rowCount?: number;
+  columnCount?: number;
+  missingValueCount?: number;
+  missingValuePercent?: number;
+}
+
+/** Full shape of the POST /api/upload response (plus local client fields). */
+interface ApiResult {
+  message?: string;
+  status?: string;
+  evaluation_id?: string;
+  quasi_identifiers?: string[];
+  sensitive_attributes?: string[];
+  sensitive_attributes_missing?: {
+    missing_in_real?: string[];
+    missing_in_synthetic?: string[];
+  };
+  risk_evaluation?: RiskEvaluation;
+  real_file?: FileInfo;
+  synthetic_file?: FileInfo;
+  common_columns?: string[];
+  real_only_columns?: string[];
+  synthetic_only_columns?: string[];
+  /** Client-side fields injected by page.tsx before sessionStorage.setItem */
+  _localRealSummary?: LocalCsvSummary | null;
+  _localSyntheticSummary?: LocalCsvSummary | null;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function formatBytes(bytes?: number): string {
   if (bytes == null) return "-";
   if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(2)} MB`;
   return `${(bytes / 1024).toFixed(2)} KB`;
 }
 
+/** Convert a 0-100 percentage to a 0–10 display string, e.g. "5.2/10". */
+function pctToTenScale(pct: number | null | undefined): string {
+  if (pct == null) return "—";
+  return `${(pct / 10).toFixed(1)}/10`;
+}
+
+/** Map backend risk level strings (HIGH/MEDIUM/LOW) to frontend RiskLevel type. */
+function backendLevelToRisk(level?: string): RiskLevel | null {
+  if (!level) return null;
+  const map: Record<string, RiskLevel> = { HIGH: "High", MEDIUM: "Medium", LOW: "Low" };
+  return map[level.toUpperCase()] ?? null;
+}
+
+/** Derive frontend RiskLevel from a raw 0-100 percentage using the project thresholds. */
+function riskLevelFromPct(pct: number): RiskLevel {
+  if (pct >= 20) return "High";
+  if (pct >= 10) return "Medium";
+  return "Low";
+}
+
+/**
+ * Extract per-SA max risk scores from the attribute inference summary.
+ * risk_score from backend is a 0-1 decimal; we convert to 0-100 here.
+ */
+function getAttrInferenceScores(
+  summary?: AttrInferenceSummary
+): { sa: string; scorePct: number }[] {
+  if (!summary) return [];
+  const out: { sa: string; scorePct: number }[] = [];
+  for (const [sa, results] of Object.entries(summary)) {
+    if (!Array.isArray(results)) continue;
+    const scores = results
+      .map((r) => (typeof r?.risk_score === "number" ? r.risk_score * 100 : -Infinity))
+      .filter(isFinite);
+    if (scores.length > 0) {
+      out.push({ sa, scorePct: Math.max(...scores) });
+    }
+  }
+  return out;
+}
+
 // ─── Helper: map raw API result → display-ready AnalysisResults ──────────────
 function buildResults(api: ApiResult): AnalysisResults {
   const realFile = api.real_file;
   const syntheticFile = api.synthetic_file;
+  const evalSummary = api.risk_evaluation?.summary;
+
+  // ── Extract scores from each risk category ────────────────────────────────
+  const uniq = evalSummary?.uniqueness_and_rare_combination;
+  const uniqPct = uniq?.uniqueness_score_pct ?? null;
+  const rarePct = uniq?.rare_combination_score_pct ?? null;
+
+  const linkage = evalSummary?.linkage_reidentification;
+  const linkagePct = linkage?.overall_linkage_score_pct ?? null;
+  const linkageLevel =
+    backendLevelToRisk(linkage?.risk_level) ??
+    (linkagePct !== null ? riskLevelFromPct(linkagePct) : null);
+
+  const attrScores = getAttrInferenceScores(evalSummary?.attribute_inference_summary);
+  const attrAvgPct =
+    attrScores.length > 0
+      ? attrScores.reduce((s, x) => s + x.scorePct, 0) / attrScores.length
+      : null;
+
+  const allPcts = [uniqPct, rarePct, linkagePct, attrAvgPct].filter(
+    (p): p is number => p !== null
+  );
+  const overallPct = allPcts.length > 0 ? Math.max(...allPcts) : null;
+
+  // ── Risk overview cards ────────────────────────────────────────────────────
+  const riskOverview: AnalysisResults["riskOverview"] = [
+    {
+      label: "Overall Risk Level",
+      value: pctToTenScale(overallPct),
+      level: overallPct !== null ? riskLevelFromPct(overallPct) : mockResults.riskOverview[0].level,
+    },
+    {
+      label: "Uniqueness Risk",
+      value: pctToTenScale(uniqPct),
+      level: uniqPct !== null ? riskLevelFromPct(uniqPct) : mockResults.riskOverview[1].level,
+    },
+    {
+      label: "Linkage Risk",
+      value: pctToTenScale(linkagePct),
+      level: linkageLevel ?? mockResults.riskOverview[2].level,
+    },
+    {
+      label: "Attribute Inference Risk",
+      value: pctToTenScale(attrAvgPct),
+      level: attrAvgPct !== null ? riskLevelFromPct(attrAvgPct) : mockResults.riskOverview[3].level,
+    },
+  ];
+
+  // ── Variable risk chart: per-SA attribute inference scores (0-10 scale) ───
+  const variableRiskChart: AnalysisResults["variableRiskChart"] =
+    attrScores.length > 0
+      ? [...attrScores]
+          .sort((a, b) => a.scorePct - b.scorePct)
+          .map(({ sa, scorePct }) => ({
+            variable: sa,
+            score: Math.round((scorePct / 10) * 10) / 10, // to 1 d.p. on 0-10 scale
+          }))
+      : mockResults.variableRiskChart;
+
+  // ── Variable risk ranking ──────────────────────────────────────────────────
+  const variableRiskRanking: AnalysisResults["variableRiskRanking"] =
+    attrScores.length > 0
+      ? [...attrScores]
+          .sort((a, b) => b.scorePct - a.scorePct)
+          .map(({ sa, scorePct }, idx) => ({
+            rank: idx + 1,
+            variable: sa,
+            score: Math.round((scorePct / 10) * 10) / 10,
+            level: riskLevelFromPct(scorePct),
+          }))
+      : mockResults.variableRiskRanking;
+
+  // ── Missing values from local client-side parse (not available in backend) ─
+  const realMissingPct = api._localRealSummary?.missingValuePercent;
+  const missingDisplay =
+    realMissingPct != null
+      ? `${realMissingPct.toFixed(1)}%`
+      : mockResults.datasetSummary.missingValues;
 
   return {
     uploadedDatasets: {
       real: {
         name: realFile?.original_filename ?? mockResults.uploadedDatasets.real.name,
-        size: formatBytes(realFile?.size_bytes) !== "-"
-          ? formatBytes(realFile?.size_bytes)
-          : mockResults.uploadedDatasets.real.size,
+        size:
+          formatBytes(realFile?.size_bytes) !== "-"
+            ? formatBytes(realFile?.size_bytes)
+            : mockResults.uploadedDatasets.real.size,
       },
       synthetic: {
         name: syntheticFile?.original_filename ?? mockResults.uploadedDatasets.synthetic.name,
-        size: formatBytes(syntheticFile?.size_bytes) !== "-"
-          ? formatBytes(syntheticFile?.size_bytes)
-          : mockResults.uploadedDatasets.synthetic.size,
+        size:
+          formatBytes(syntheticFile?.size_bytes) !== "-"
+            ? formatBytes(syntheticFile?.size_bytes)
+            : mockResults.uploadedDatasets.synthetic.size,
       },
     },
     datasetSummary: {
-      rows: realFile?.row_count != null
-        ? realFile.row_count.toLocaleString()
-        : mockResults.datasetSummary.rows,
-      columns: realFile?.column_count != null
-        ? String(realFile.column_count)
-        : mockResults.datasetSummary.columns,
-      missingValues: mockResults.datasetSummary.missingValues,
+      rows:
+        realFile?.row_count != null
+          ? realFile.row_count.toLocaleString()
+          : mockResults.datasetSummary.rows,
+      columns:
+        realFile?.column_count != null
+          ? String(realFile.column_count)
+          : mockResults.datasetSummary.columns,
+      missingValues: missingDisplay,
     },
-    // TODO: replace mock fallbacks once the backend returns these fields
-    riskOverview: api.risk_overview ?? mockResults.riskOverview,
-    variableRiskChart: api.variable_risk_chart ?? mockResults.variableRiskChart,
-    ageGroupChart: api.age_group_chart ?? mockResults.ageGroupChart,
-    variableRiskRanking: api.variable_risk_ranking ?? mockResults.variableRiskRanking,
+    riskOverview,
+    variableRiskChart,
+    ageGroupChart: mockResults.ageGroupChart, // no backend equivalent yet
+    variableRiskRanking,
   };
 }
 
@@ -238,6 +460,8 @@ export default function ResultsPage() {
 
   // null = loading, false = not found, object = loaded
   const [apiResult, setApiResult] = useState<ApiResult | null | false>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   useEffect(() => {
     // Read the backend response stored by the landing page after a successful upload.
@@ -264,6 +488,39 @@ export default function ResultsPage() {
 
   // Map API response to the display shape (with mock fallbacks for missing fields)
   const results = buildResults(apiResult);
+
+  const resultDir = apiResult.risk_evaluation?.result_dir;
+  const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
+
+  const handleDownloadReport = async (format: "html" | "csv") => {
+    if (!resultDir) {
+      setDownloadError("Report not available — result directory missing from the analysis response.");
+      return;
+    }
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      const url = `${API_BASE}/api/report/${format}?result_dir=${encodeURIComponent(resultDir)}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: `Server error (${res.status})` }));
+        setDownloadError(err.detail ?? `Failed to generate report (${res.status})`);
+        return;
+      }
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = format === "html" ? "privacy_risk_report.html" : "privacy_risk_report_summary.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    } catch {
+      setDownloadError("Could not reach the backend to generate the report.");
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-transparent flex flex-col">
@@ -298,15 +555,56 @@ export default function ResultsPage() {
           </div>
 
           {/* ── Section 2: Dataset Summary ── */}
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-5">
             <SectionTitle>Dataset Summary</SectionTitle>
-            <div className="flex flex-col sm:flex-row gap-6">
-              <SummaryCard icon={<RowsIcon />} iconBg="bg-[#dbeafe]"
-                value={results.datasetSummary.rows} label="Number of Rows" />
-              <SummaryCard icon={<ColumnsIcon />} iconBg="bg-[#cbfbf1]"
-                value={results.datasetSummary.columns} label="Number of Columns" />
-              <SummaryCard icon={<MissingIcon />} iconBg="bg-[#ffedd4]"
-                value={results.datasetSummary.missingValues} label="Missing Values" />
+
+            {/* Real dataset */}
+            <div className="flex flex-col gap-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#2b7fff]">
+                Real Dataset
+              </p>
+              <div className="flex flex-col sm:flex-row gap-6">
+                <SummaryCard icon={<RowsIcon />} iconBg="bg-[#dbeafe]"
+                  value={results.datasetSummary.rows} label="Number of Rows" />
+                <SummaryCard icon={<ColumnsIcon />} iconBg="bg-[#cbfbf1]"
+                  value={results.datasetSummary.columns} label="Number of Columns" />
+                <SummaryCard icon={<MissingIcon />} iconBg="bg-[#ffedd4]"
+                  value={results.datasetSummary.missingValues} label="Missing Values" />
+              </div>
+            </div>
+
+            {/* Synthetic dataset */}
+            <div className="flex flex-col gap-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#009689]">
+                Synthetic Dataset
+              </p>
+              <div className="flex flex-col sm:flex-row gap-6">
+                <SummaryCard icon={<RowsIcon />} iconBg="bg-[#dbeafe]"
+                  value={
+                    apiResult.synthetic_file?.row_count != null
+                      ? apiResult.synthetic_file.row_count.toLocaleString()
+                      : apiResult._localSyntheticSummary?.rowCount != null
+                        ? apiResult._localSyntheticSummary.rowCount.toLocaleString()
+                        : "—"
+                  }
+                  label="Number of Rows" />
+                <SummaryCard icon={<ColumnsIcon />} iconBg="bg-[#cbfbf1]"
+                  value={
+                    apiResult.synthetic_file?.column_count != null
+                      ? String(apiResult.synthetic_file.column_count)
+                      : apiResult._localSyntheticSummary?.columnCount != null
+                        ? String(apiResult._localSyntheticSummary.columnCount)
+                        : "—"
+                  }
+                  label="Number of Columns" />
+                <SummaryCard icon={<MissingIcon />} iconBg="bg-[#ffedd4]"
+                  value={
+                    apiResult._localSyntheticSummary?.missingValuePercent != null
+                      ? `${apiResult._localSyntheticSummary.missingValuePercent.toFixed(1)}%`
+                      : "—"
+                  }
+                  label="Missing Values" />
+              </div>
             </div>
           </div>
 
@@ -420,36 +718,54 @@ export default function ResultsPage() {
           </div>
 
           {/* ── Section 7: Bottom Action Buttons ── */}
-          <div className="flex items-center justify-center gap-4 pb-4">
-            <button
-              type="button"
-              disabled
-              className="bg-[#d1d5dc] text-white text-base font-medium h-12 px-6 rounded-[10px] flex items-center gap-2 cursor-not-allowed"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
-                fill="white" stroke="none">
-                <polygon points="5 3 19 12 5 21 5 3" />
-              </svg>
-              Run Analysis
-            </button>
+          <div className="flex flex-col items-center gap-3 pb-4">
+            <div className="flex items-center justify-center gap-4">
+              <button
+                type="button"
+                disabled
+                className="bg-[#d1d5dc] text-white text-base font-medium h-12 px-6 rounded-[10px] flex items-center gap-2 cursor-not-allowed"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+                  fill="white" stroke="none">
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
+                Run Analysis
+              </button>
 
-            {/* TODO: wire to backend report download endpoint */}
-            <button
-              type="button"
-              onClick={() => alert("Download Report — backend not connected yet.")}
-              className="bg-[#009689] hover:bg-[#007a6e] text-white text-base font-medium h-12 px-6 rounded-[10px] flex items-center gap-2 transition-colors"
-            >
-              <DownloadIcon />
-              Download Report
-            </button>
+              <button
+                type="button"
+                onClick={() => handleDownloadReport("html")}
+                disabled={downloading}
+                className="bg-[#009689] hover:bg-[#007a6e] disabled:bg-[#d1d5dc] text-white text-base font-medium h-12 px-6 rounded-[10px] flex items-center gap-2 transition-colors"
+              >
+                <DownloadIcon />
+                {downloading ? "Generating..." : "Download Report"}
+              </button>
 
-            <Link
-              href="/"
-              className="bg-white hover:bg-gray-50 text-[#364153] text-base font-medium h-12 px-6 rounded-[10px] border border-[#d1d5dc] flex items-center gap-2 transition-colors"
-            >
-              <RefreshIcon />
-              Reset
-            </Link>
+              <button
+                type="button"
+                onClick={() => handleDownloadReport("csv")}
+                disabled={downloading}
+                className="bg-white hover:bg-gray-50 disabled:opacity-50 text-[#009689] text-base font-medium h-12 px-6 rounded-[10px] border border-[#009689] flex items-center gap-2 transition-colors"
+              >
+                <DownloadIcon />
+                {downloading ? "..." : "Download CSV"}
+              </button>
+
+              <Link
+                href="/"
+                className="bg-white hover:bg-gray-50 text-[#364153] text-base font-medium h-12 px-6 rounded-[10px] border border-[#d1d5dc] flex items-center gap-2 transition-colors"
+              >
+                <RefreshIcon />
+                Reset
+              </Link>
+            </div>
+
+            {downloadError && (
+              <div className="w-full max-w-xl bg-[#fef2f2] border border-[#fca5a5] rounded-[10px] px-5 py-3">
+                <p className="text-[#b91c1c] text-sm font-medium">{downloadError}</p>
+              </div>
+            )}
           </div>
 
         </div>

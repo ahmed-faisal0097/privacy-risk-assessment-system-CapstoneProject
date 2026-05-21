@@ -31,7 +31,15 @@ export const quasiIdentifierOptions: SelectOption[] = [
   { label: "Patient Number", value: "patient_nbr" },
 ];
 
-export const DEFAULT_QUASI_IDENTIFIERS = ["age", "gender", "race"];
+// Matches backend DEFAULT_QIS in backend/app/validation.py
+export const DEFAULT_QUASI_IDENTIFIERS = [
+  "age",
+  "gender",
+  "race",
+  "admission_type_id",
+  "discharge_disposition_id",
+  "time_in_hospital",
+];
 
 export default function QuasiIdentifierSelector({
   selected,
