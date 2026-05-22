@@ -242,49 +242,15 @@ export default function ResultsCharts({
               </ResponsiveContainer>
             </>
           ) : (
-            /* Fallback: original age group chart */
             <>
               <h3 className="text-[#101828] text-base font-semibold leading-6">
-                Risk by Age Group
+                Attribute Inference: Attack vs Baseline
               </h3>
-              <ResponsiveContainer width="100%" height={260}>
-                <BarChart
-                  data={ageGroupChart}
-                  margin={{ top: 0, right: 16, bottom: 16, left: 0 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                  <XAxis
-                    dataKey="group"
-                    tick={{ fontSize: 12, fill: "#6a7282" }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    domain={[0, 10]}
-                    ticks={[0, 3, 6, 10]}
-                    tick={{ fontSize: 12, fill: "#6a7282" }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <Tooltip
-                    cursor={{ fill: "rgba(0,0,0,0.04)" }}
-                    contentStyle={{
-                      borderRadius: 8,
-                      border: "1px solid #e5e7eb",
-                      fontSize: 12,
-                    }}
-                    formatter={(value) => {
-                      const num = typeof value === "number" ? value : 0;
-                      return [num.toFixed(1), "Risk Score"] as [string, string];
-                    }}
-                  />
-                  <Bar dataKey="score" radius={[4, 4, 0, 0]} barSize={48}>
-                    {ageGroupChart.map((entry, i) => (
-                      <Cell key={i} fill={barColor(entry.score)} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              <div className="h-[260px] flex items-center justify-center rounded-[10px] border border-dashed border-[#d1d5dc] bg-[#f9fafb] px-6 text-center">
+                <p className="text-[#6a7282] text-sm leading-5">
+                  No attribute inference chart data was returned for this run.
+                </p>
+              </div>
             </>
           )}
         </div>

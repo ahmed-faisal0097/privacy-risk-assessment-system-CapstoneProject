@@ -1,10 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import UploadCard from "@/app/components/UploadCard";
 import SummaryCard from "@/app/components/SummaryCard";
 import ActionButtons from "@/app/components/ActionButtons";
+import AnalysisProgressCard, {
+  type AnalysisProgressState,
+} from "@/app/components/AnalysisProgressCard";
+import type { AttributeOption } from "@/app/components/AttributeMultiSelect";
 import QuasiIdentifierSelector, {
   DEFAULT_QUASI_IDENTIFIERS,
 } from "@/app/components/QuasiIdentifierSelector";
@@ -14,6 +18,222 @@ import SensitiveAttributeSelector, {
 
 // Backend base URL — set NEXT_PUBLIC_API_BASE_URL in .env.local
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
+
+const KNOWN_ATTRIBUTE_LABELS: Record<string, string> = {
+  A1Cresult: "A1C Result",
+  admission_source_id: "Admission Source",
+  admission_type_id: "Admission Type",
+  diabetesMed: "Diabetes Medication",
+  diag_1: "Primary Diagnosis",
+  diag_2: "Secondary Diagnosis",
+  diag_3: "Tertiary Diagnosis",
+  discharge_disposition_id: "Discharge Disposition",
+  max_glu_serum: "Max Glucose Serum",
+  medical_specialty: "Medical Specialty",
+  payer_code: "Payer Code",
+  race: "Race / Ethnicity",
+  readmitted: "Readmitted",
+};
+
+function getFirstCsvRecord(text: string): string {
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    }
+
+    if (!inQuotes && (char === "\n" || char === "\r")) {
+      return text.slice(0, index);
+    }
+  }
+
+  return text;
+}
+
+function parseCsvHeader(record: string): string[] {
+  const fields: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  const cleanRecord = record.replace(/^\uFEFF/, "");
+
+  for (let index = 0; index < cleanRecord.length; index += 1) {
+    const char = cleanRecord[index];
+    const next = cleanRecord[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      fields.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  fields.push(current.trim());
+  return fields.filter(Boolean);
+}
+
+async function readCsvHeaders(file: File): Promise<string[]> {
+  const text = await file.slice(0, 64 * 1024).text();
+  return parseCsvHeader(getFirstCsvRecord(text));
+}
+
+function formatAttributeLabel(value: string): string {
+  if (KNOWN_ATTRIBUTE_LABELS[value]) return KNOWN_ATTRIBUTE_LABELS[value];
+
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function buildAttributeOptions(headerGroups: string[][]): AttributeOption[] {
+  const seen = new Set<string>();
+  const options: AttributeOption[] = [];
+
+  headerGroups.flat().forEach((header) => {
+    const value = header.trim();
+    const normalizedValue = value.toLowerCase();
+
+    if (!value || seen.has(normalizedValue)) return;
+
+    seen.add(normalizedValue);
+    options.push({
+      label: formatAttributeLabel(value),
+      value,
+    });
+  });
+
+  return options;
+}
+
+type UploadRequestError = {
+  status?: number;
+  data?: unknown;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getApiMessage(data: unknown, fallback: string) {
+  if (isRecord(data)) {
+    const detail = data.detail;
+    const message = data.message;
+
+    if (typeof detail === "string") return detail;
+    if (typeof message === "string") return message;
+    if (detail !== undefined) return JSON.stringify(detail);
+  }
+
+  return fallback;
+}
+
+function postAnalysisForm({
+  form,
+  url,
+  onUploadProgress,
+  onUploadComplete,
+}: {
+  form: FormData;
+  url: string;
+  onUploadProgress: (percent: number) => void;
+  onUploadComplete: () => void;
+}): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+
+    xhr.open("POST", url);
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      onUploadProgress(Math.round((event.loaded / event.total) * 100));
+    };
+    xhr.upload.onload = () => {
+      onUploadProgress(100);
+      onUploadComplete();
+    };
+    xhr.onerror = () => {
+      reject(new Error("Network request failed"));
+    };
+    xhr.onload = () => {
+      const contentType = xhr.getResponseHeader("content-type") ?? "";
+      const responseText = xhr.responseText;
+      let data: unknown = responseText ? { message: responseText } : {};
+
+      if (contentType.includes("application/json") && responseText) {
+        try {
+          data = JSON.parse(responseText);
+        } catch {
+          data = { message: responseText };
+        }
+      }
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(data);
+        return;
+      }
+
+      const error: UploadRequestError = {
+        status: xhr.status,
+        data,
+      };
+      reject(error);
+    };
+
+    xhr.send(form);
+  });
+}
+
+function createJobId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return `job-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function parseProgressPayload(data: unknown): AnalysisProgressState | null {
+  if (!isRecord(data)) return null;
+
+  const activeStep = data.activeStep;
+  const stepProgress = data.stepProgress;
+  const completed = data.completed;
+
+  if (
+    typeof activeStep !== "number" ||
+    typeof stepProgress !== "number" ||
+    typeof completed !== "boolean"
+  ) {
+    return null;
+  }
+
+  return {
+    activeStep,
+    stepProgress,
+    completed,
+    status: typeof data.status === "string" ? data.status : undefined,
+    message: typeof data.message === "string" ? data.message : undefined,
+  };
+}
 
 /* ── Icons ── */
 function ShieldIcon() {
@@ -87,13 +307,83 @@ export default function Home() {
 
   const [realFile, setRealFile] = useState<File | null>(null);
   const [syntheticFile, setSyntheticFile] = useState<File | null>(null);
+  const [attributeOptions, setAttributeOptions] = useState<AttributeOption[]>([]);
   const [selectedQIs, setSelectedQIs] = useState<string[]>(DEFAULT_QUASI_IDENTIFIERS);
   const [selectedSAs, setSelectedSAs] = useState<string[]>(DEFAULT_SENSITIVE_ATTRIBUTES);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [analysisProgress, setAnalysisProgress] =
+    useState<AnalysisProgressState | null>(null);
+  const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
 
   const bothUploaded = realFile !== null && syntheticFile !== null;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!realFile || !syntheticFile) {
+      setAttributeOptions([]);
+      return;
+    }
+
+    Promise.all([readCsvHeaders(realFile), readCsvHeaders(syntheticFile)])
+      .then((headerGroups) => {
+        if (cancelled) return;
+        setAttributeOptions(buildAttributeOptions(headerGroups));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAttributeOptions([]);
+        setError("Could not read the CSV headers from the uploaded datasets.");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [realFile, syntheticFile]);
+
+  useEffect(() => {
+    if (attributeOptions.length === 0) return;
+
+    const values = new Set(attributeOptions.map((option) => option.value));
+    setSelectedQIs((current) => current.filter((value) => values.has(value)));
+    setSelectedSAs((current) => current.filter((value) => values.has(value)));
+  }, [attributeOptions]);
+
+  useEffect(() => {
+    if (!isSubmitting || !analysisJobId) return;
+
+    const interval = window.setInterval(async () => {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/upload/progress/${analysisJobId}`
+        );
+
+        if (!response.ok) return;
+
+        const progress = parseProgressPayload(await response.json());
+        if (!progress) return;
+
+        setAnalysisProgress((current) => {
+          if (!current) return progress;
+
+          const isBrowserUploadAhead =
+            current.activeStep === 0 &&
+            progress.activeStep === 0 &&
+            current.stepProgress > progress.stepProgress;
+
+          return isBrowserUploadAhead
+            ? { ...progress, stepProgress: current.stepProgress }
+            : progress;
+        });
+      } catch {
+        // Keep the current progress state; the upload request will surface errors.
+      }
+    }, 500);
+
+    return () => window.clearInterval(interval);
+  }, [analysisJobId, isSubmitting]);
 
   // ── Reset ──────────────────────────────────────────────────────────────────
   const handleReset = () => {
@@ -103,6 +393,8 @@ export default function Home() {
     setSelectedSAs(DEFAULT_SENSITIVE_ATTRIBUTES);
     setError(null);
     setSuccessMessage(null);
+    setAnalysisProgress(null);
+    setAnalysisJobId(null);
   };
 
   // ── Run Analysis ───────────────────────────────────────────────────────────
@@ -134,47 +426,89 @@ export default function Home() {
     }
 
     // Build FormData
+    const jobId = createJobId();
     const form = new FormData();
     form.append("real_file", realFile);
     form.append("synthetic_file", syntheticFile);
     selectedQIs.forEach((qi) => form.append("quasi_identifiers", qi));
     selectedSAs.forEach((sa) => form.append("sensitive_attributes", sa));
+    form.append("job_id", jobId);
 
     setIsSubmitting(true);
+    setAnalysisJobId(jobId);
+    setAnalysisProgress({
+      activeStep: 0,
+      stepProgress: 0,
+      completed: false,
+      message: "Uploading datasets...",
+    });
     try {
-      // TODO (backend integration): POST to the FastAPI validation endpoint.
-      // The response JSON is stored in sessionStorage and read by /results.
-      const res = await fetch(`${API_BASE_URL}/api/upload`, {
-        method: "POST",
-        body: form,
+      const data = await postAnalysisForm({
+        form,
+        url: `${API_BASE_URL}/api/upload`,
+        onUploadProgress: (percent) => {
+          const browserUploadProgress = Math.round(percent * 0.4);
+          setAnalysisProgress((current) => {
+            if (!current || current.completed || current.activeStep !== 0) {
+              return current;
+            }
+
+            return {
+              ...current,
+              stepProgress: Math.max(current.stepProgress, browserUploadProgress),
+              message: "Uploading datasets...",
+            };
+          });
+        },
+        onUploadComplete: () => {
+          setAnalysisProgress((current) => {
+            if (!current || current.completed) return current;
+
+            return {
+              activeStep: current.activeStep,
+              stepProgress:
+                current.activeStep === 0
+                  ? Math.max(current.stepProgress, 40)
+                  : current.stepProgress,
+              completed: false,
+              message: "Upload sent. Waiting for backend validation.",
+            };
+          });
+        },
       });
 
-      const contentType = res.headers.get("content-type");
-      const data = contentType?.includes("application/json")
-        ? await res.json()
-        : { message: await res.text() };
-
-      if (!res.ok) {
-        // Surface the backend error message if present
-        const msg =
-          data?.detail ??
-          data?.message ??
-          `Server error (${res.status}). Please try again.`;
-        setError(typeof msg === "string" ? msg : JSON.stringify(msg));
-        return;
-      }
+      setAnalysisProgress({
+        activeStep: 4,
+        stepProgress: 100,
+        completed: true,
+        status: "completed",
+        message: "Analysis complete.",
+      });
 
       // Store the full response so the results page can read it
       sessionStorage.setItem("analysisResult", JSON.stringify(data));
-      setSuccessMessage(data?.message ?? "Files uploaded successfully.");
-      await new Promise((resolve) => setTimeout(resolve, 900));
+      setSuccessMessage(getApiMessage(data, "Files uploaded successfully."));
+      await new Promise((resolve) => setTimeout(resolve, 1200));
       router.push("/results");
-    } catch {
-      setError(
-        "Could not reach the backend. Make sure the API server is running and NEXT_PUBLIC_API_BASE_URL is set correctly."
-      );
+    } catch (requestError) {
+      setAnalysisProgress(null);
+
+      if (requestError instanceof Error) {
+        setError(
+          "Could not reach the backend. Make sure the API server is running and NEXT_PUBLIC_API_BASE_URL is set correctly."
+        );
+      } else {
+        const uploadError = requestError as UploadRequestError;
+        setError(
+          getApiMessage(
+            uploadError.data,
+            `Server error (${uploadError.status ?? "unknown"}). Please try again.`
+          )
+        );
+      }
     } finally {
       setIsSubmitting(false);
+      setAnalysisJobId(null);
     }
   };
 
@@ -233,12 +567,14 @@ export default function Home() {
           <>
             {/* Select Quasi Identifiers */}
             <QuasiIdentifierSelector
+              options={attributeOptions}
               selected={selectedQIs}
               onChange={(v) => { setSelectedQIs(v); setError(null); setSuccessMessage(null); }}
             />
 
             {/* Select Sensitive Attributes */}
             <SensitiveAttributeSelector
+              options={attributeOptions}
               selected={selectedSAs}
               onChange={(v) => { setSelectedSAs(v); setError(null); setSuccessMessage(null); }}
             />
@@ -267,6 +603,10 @@ export default function Home() {
               onReset={handleReset}
               isSubmitting={isSubmitting}
             />
+
+            {analysisProgress && (
+              <AnalysisProgressCard progress={analysisProgress} />
+            )}
 
             {/* Error banner — shown below buttons */}
             {successMessage && <SuccessBanner message={successMessage} />}

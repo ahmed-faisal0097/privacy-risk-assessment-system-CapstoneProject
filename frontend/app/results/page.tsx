@@ -6,10 +6,8 @@ import { useRouter } from "next/navigation";
 import SummaryCard from "@/app/components/SummaryCard";
 import UploadedFilePanel from "@/app/components/UploadedFilePanel";
 import RiskOverviewCard from "@/app/components/RiskOverviewCard";
-import RiskBadge from "@/app/components/RiskBadge";
 import ResultsCharts from "@/app/components/ResultsCharts";
 import type { AttrInferenceChartRow, KDistChartRow } from "@/app/components/ResultsCharts";
-import { mockResults } from "@/app/results/mockData";
 import type { AnalysisResults, RiskLevel } from "@/app/results/mockData";
 
 const API_BASE_URL = (
@@ -28,6 +26,8 @@ interface FileInfo {
   extension?: string;
   row_count?: number;
   column_count?: number;
+  missing_values?: number;
+  missing_value_pct?: number;
   columns?: string[];
 }
 
@@ -51,6 +51,19 @@ interface UniquenessSummary {
     rows_in_groups_lt_5?: number;
     rows_in_groups_lt_5_rate?: number;
   };
+}
+
+interface LinkageSummary {
+  exact_match_score_pct?: number;
+  hamming_score_pct?: number;
+  overall_linkage_score_pct?: number;
+  risk_level?: string;
+}
+
+interface RiskEvaluationSummary {
+  uniqueness_and_rare_combination?: UniquenessSummary;
+  linkage_reidentification?: LinkageSummary;
+  attribute_inference_summary?: Record<string, AttrInferenceRow[] | { error: string }>;
 }
 
 // One item returned by attribute_inference_evaluation per QID set
@@ -77,7 +90,9 @@ interface RiskEvaluation {
   sa_list?: string[];
   result_dir?: string;
   files?: Record<string, string>;
-  summary?: UniquenessSummary;
+  summary?: RiskEvaluationSummary;
+  uniqueness_and_rare_combination?: UniquenessSummary;
+  linkage_reidentification?: LinkageSummary;
   attribute_inference_summary?: Record<string, AttrInferenceRow[] | { error: string }>;
 }
 
@@ -102,23 +117,74 @@ function formatBytes(bytes?: number): string {
   return `${(bytes / 1024).toFixed(2)} KB`;
 }
 
-function scoreToCard(
-  pct: number,
-  label: string
-): { label: string; value: string; level: RiskLevel } {
-  let level: RiskLevel;
-  let display: number;
-  if (pct >= 20) {
-    level = "High";
-    display = Math.min(10, 7 + ((pct - 20) / 80) * 3);
-  } else if (pct >= 10) {
-    level = "Medium";
-    display = 4 + ((pct - 10) / 10) * 2;
-  } else {
-    level = "Low";
-    display = 1 + (pct / 10) * 2;
+function formatMissingValues(file?: FileInfo): string {
+  if (!file) return "-";
+  if (file.missing_value_pct != null) {
+    return `${file.missing_value_pct.toFixed(2)}%`;
   }
-  return { label, value: `${display.toFixed(1)}/10`, level };
+  if (file.missing_values != null) {
+    return file.missing_values.toLocaleString();
+  }
+  return "-";
+}
+
+function pctLevel(pct: number, highThreshold: number, mediumThreshold: number): RiskLevel {
+  if (pct >= highThreshold) return "High";
+  if (pct >= mediumThreshold) return "Medium";
+  return "Low";
+}
+
+function pctCard(
+  pct: number | undefined,
+  label: string,
+  highThreshold: number,
+  mediumThreshold: number
+): { label: string; value: string; level: RiskLevel } {
+  const value = pct ?? 0;
+  return {
+    label,
+    value: `${value.toFixed(2)}%`,
+    level: pctLevel(value, highThreshold, mediumThreshold),
+  };
+}
+
+function normalizeDecimal(value: number | undefined): number {
+  if (value == null || Number.isNaN(value)) return 0;
+  return value > 1 ? value / 100 : value;
+}
+
+function getUniquenessSummary(re?: RiskEvaluation): UniquenessSummary | undefined {
+  return re?.summary?.uniqueness_and_rare_combination ?? re?.uniqueness_and_rare_combination;
+}
+
+function getLinkageSummary(re?: RiskEvaluation): LinkageSummary | undefined {
+  return re?.summary?.linkage_reidentification ?? re?.linkage_reidentification;
+}
+
+function getAttrSummary(
+  re?: RiskEvaluation
+): Record<string, AttrInferenceRow[] | { error: string }> | undefined {
+  return re?.summary?.attribute_inference_summary ?? re?.attribute_inference_summary;
+}
+
+function getMaxAttrRiskPct(
+  attrSummary?: Record<string, AttrInferenceRow[] | { error: string }>
+): number {
+  let maxRisk = 0;
+
+  if (!attrSummary) return maxRisk;
+
+  for (const val of Object.values(attrSummary)) {
+    if (!Array.isArray(val) || val.length === 0) continue;
+    for (const row of val) {
+      const raw = normalizeDecimal(
+        row.risk_score ?? (row.coverage_rate ?? 0) * (row.gain_over_baseline ?? 0)
+      );
+      maxRisk = Math.max(maxRisk, raw);
+    }
+  }
+
+  return maxRisk * 100;
 }
 
 /**
@@ -137,10 +203,10 @@ function buildAttrInferenceChart(
     const r = val[0];
     rows.push({
       attribute: sa,
-      baseline: parseFloat(((r.baseline_accuracy ?? 0) * 100).toFixed(1)),
-      attack: parseFloat(((r.attack_accuracy_on_covered ?? 0) * 100).toFixed(1)),
-      gain: parseFloat(((r.gain_over_baseline ?? 0) * 100).toFixed(1)),
-      coverage: parseFloat(((r.coverage_rate ?? 0) * 100).toFixed(1)),
+      baseline: parseFloat((normalizeDecimal(r.baseline_accuracy) * 100).toFixed(1)),
+      attack: parseFloat((normalizeDecimal(r.attack_accuracy_on_covered) * 100).toFixed(1)),
+      gain: parseFloat((normalizeDecimal(r.gain_over_baseline) * 100).toFixed(1)),
+      coverage: parseFloat((normalizeDecimal(r.coverage_rate) * 100).toFixed(1)),
       qualitative_label: r.qualitative_label ?? "Low",
     });
   }
@@ -192,18 +258,21 @@ function buildKDistChart(summary?: UniquenessSummary): KDistChartRow[] {
 function buildVariableRiskChart(
   attrSummary?: Record<string, AttrInferenceRow[] | { error: string }>
 ): AnalysisResults["variableRiskChart"] {
-  if (!attrSummary) return mockResults.variableRiskChart;
+  if (!attrSummary) return [];
 
   const entries: { variable: string; score: number }[] = [];
   for (const [sa, val] of Object.entries(attrSummary)) {
     if (!Array.isArray(val) || val.length === 0) continue;
-    const r = val[0];
-    const raw = r.risk_score ?? (r.coverage_rate ?? 0) * (r.gain_over_baseline ?? 0);
+    const raw = Math.max(
+      ...val.map((r) =>
+        normalizeDecimal(r.risk_score ?? (r.coverage_rate ?? 0) * (r.gain_over_baseline ?? 0))
+      )
+    );
     // risk_score is 0–1; scale to 0–10
     entries.push({ variable: sa, score: parseFloat((raw * 10).toFixed(2)) });
   }
 
-  if (entries.length === 0) return mockResults.variableRiskChart;
+  if (entries.length === 0) return [];
   return entries.sort((a, b) => a.score - b.score);
 }
 
@@ -213,24 +282,21 @@ function buildVariableRiskChart(
 function buildAttrRanking(
   attrSummary?: Record<string, AttrInferenceRow[] | { error: string }>
 ): AnalysisResults["variableRiskRanking"] {
-  if (!attrSummary) return mockResults.variableRiskRanking;
+  if (!attrSummary) return [];
 
   const rows: { variable: string; score: number; level: RiskLevel }[] = [];
   for (const [sa, val] of Object.entries(attrSummary)) {
     if (!Array.isArray(val) || val.length === 0) continue;
-    const r = val[0];
-    const raw = r.risk_score ?? (r.coverage_rate ?? 0) * (r.gain_over_baseline ?? 0);
-    const pct = raw * 100;
-    const level: RiskLevel =
-      r.qualitative_label === "High"
-        ? "High"
-        : r.qualitative_label === "Moderate"
-        ? "Medium"
-        : "Low";
+    const raw = Math.max(
+      ...val.map((r) =>
+        normalizeDecimal(r.risk_score ?? (r.coverage_rate ?? 0) * (r.gain_over_baseline ?? 0))
+      )
+    );
+    const level = pctLevel(raw * 100, 20, 10);
     rows.push({ variable: sa, score: parseFloat(raw.toFixed(4)), level });
   }
 
-  if (rows.length === 0) return mockResults.variableRiskRanking;
+  if (rows.length === 0) return [];
   rows.sort((a, b) => b.score - a.score);
   return rows.map((r, i) => ({ rank: i + 1, ...r }));
 }
@@ -242,72 +308,55 @@ function buildResults(api: ApiResult): AnalysisResults {
   const realFile = api.real_file;
   const syntheticFile = api.synthetic_file;
   const re = api.risk_evaluation;
-  const summary = re?.summary;
-  const attrSummary = re?.attribute_inference_summary;
+  const uniquenessSummary = getUniquenessSummary(re);
+  const linkageSummary = getLinkageSummary(re);
+  const attrSummary = getAttrSummary(re);
 
   const uploadedDatasets: AnalysisResults["uploadedDatasets"] = {
     real: {
-      name: realFile?.file_name ?? realFile?.original_filename ?? mockResults.uploadedDatasets.real.name,
-      size: formatBytes(realFile?.size_bytes) !== "-"
-        ? formatBytes(realFile?.size_bytes)
-        : mockResults.uploadedDatasets.real.size,
+      name: realFile?.file_name ?? realFile?.original_filename ?? "-",
+      size: formatBytes(realFile?.size_bytes),
     },
     synthetic: {
-      name: syntheticFile?.file_name ?? syntheticFile?.original_filename ?? mockResults.uploadedDatasets.synthetic.name,
-      size: formatBytes(syntheticFile?.size_bytes) !== "-"
-        ? formatBytes(syntheticFile?.size_bytes)
-        : mockResults.uploadedDatasets.synthetic.size,
+      name: syntheticFile?.file_name ?? syntheticFile?.original_filename ?? "-",
+      size: formatBytes(syntheticFile?.size_bytes),
     },
   };
 
   const datasetSummary: AnalysisResults["datasetSummary"] = {
     rows: realFile?.row_count != null
       ? realFile.row_count.toLocaleString()
-      : mockResults.datasetSummary.rows,
+      : "-",
     columns: realFile?.column_count != null
       ? String(realFile.column_count)
-      : mockResults.datasetSummary.columns,
-    missingValues: mockResults.datasetSummary.missingValues,
+      : "-",
+    missingValues: formatMissingValues(realFile),
   };
 
-  // Risk overview cards
-  let riskOverview: AnalysisResults["riskOverview"];
-  const uniqPct = summary?.uniqueness_score_pct;
-  const rarePct = summary?.rare_combination_score_pct;
-
-  if (uniqPct != null && rarePct != null) {
-    const overallPct = (uniqPct + rarePct) / 2;
-
-    // Attribute inference overall score — max risk_score across all SAs × 100
-    let attrPct = 0;
-    if (attrSummary) {
-      for (const val of Object.values(attrSummary)) {
-        if (!Array.isArray(val) || val.length === 0) continue;
-        const rs = val[0].risk_score ?? 0;
-        if (rs * 100 > attrPct) attrPct = rs * 100;
-      }
-    }
-
-    riskOverview = [
-      scoreToCard(overallPct, "Overall Risk Level"),
-      scoreToCard(uniqPct, "Uniqueness Risk"),
-      scoreToCard(rarePct, "Rare Combination Risk"),
-      attrPct > 0
-        ? scoreToCard(attrPct, "Attribute Inference Risk")
-        : (mockResults.riskOverview.find(r => r.label === "Attribute Inference Risk") ?? {
-            label: "Attribute Inference Risk", value: "—", level: "Low" as RiskLevel,
-          }),
-    ];
-  } else {
-    riskOverview = mockResults.riskOverview;
-  }
+  const riskOverview: AnalysisResults["riskOverview"] = [
+    pctCard(uniquenessSummary?.uniqueness_score_pct, "Uniqueness Score", 20, 10),
+    pctCard(uniquenessSummary?.rare_combination_score_pct, "Rare Combination Score", 20, 10),
+    pctCard(
+      linkageSummary?.exact_match_score_pct,
+      "Linkage & Re-identification Exact Match Score",
+      30,
+      10
+    ),
+    pctCard(
+      linkageSummary?.hamming_score_pct,
+      "Linkage & Re-identification Hamming Score",
+      30,
+      10
+    ),
+    pctCard(getMaxAttrRiskPct(attrSummary), "Attribute Inference Risk", 20, 10),
+  ];
 
   return {
     uploadedDatasets,
     datasetSummary,
     riskOverview,
     variableRiskChart: buildVariableRiskChart(attrSummary),
-    ageGroupChart: mockResults.ageGroupChart,
+    ageGroupChart: [],
     variableRiskRanking: buildAttrRanking(attrSummary),
   };
 }
@@ -487,10 +536,13 @@ export default function ResultsPage() {
 
   const results = buildResults(apiResult);
   const re = apiResult.risk_evaluation;
+  const uniquenessSummary = getUniquenessSummary(re);
+  const linkageSummary = getLinkageSummary(re);
+  const attrSummary = getAttrSummary(re);
 
   // Build the two new real chart datasets
-  const attrInferenceChart = buildAttrInferenceChart(re?.attribute_inference_summary);
-  const kDistChart = buildKDistChart(re?.summary);
+  const attrInferenceChart = buildAttrInferenceChart(attrSummary);
+  const kDistChart = buildKDistChart(uniquenessSummary);
 
   return (
     <div className="min-h-screen bg-[#f9fafb] flex flex-col">
@@ -565,8 +617,8 @@ export default function ResultsPage() {
               </div>
 
               {/* Real uniqueness metrics panel */}
-              {re?.summary && (() => {
-                const s = re.summary!;
+              {uniquenessSummary && (() => {
+                const s = uniquenessSummary;
                 return (
                   <div className="border-t border-[#e5e7eb] pt-4 flex flex-col gap-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-[#364153]">
@@ -594,6 +646,24 @@ export default function ResultsPage() {
                 );
               })()}
 
+              {linkageSummary && (
+                <div className="border-t border-[#e5e7eb] pt-4 flex flex-col gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#364153]">
+                    Linkage &amp; Re-identification Results
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
+                    <div>
+                      <p className="text-[#4a5565] text-xs">Exact Match Score</p>
+                      <p className="font-semibold text-[#101828]">{linkageSummary.exact_match_score_pct?.toFixed(2) ?? "—"}%</p>
+                    </div>
+                    <div>
+                      <p className="text-[#4a5565] text-xs">Hamming Score</p>
+                      <p className="font-semibold text-[#101828]">{linkageSummary.hamming_score_pct?.toFixed(2) ?? "—"}%</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Attribute inference summary panel */}
               {attrInferenceChart.length > 0 && (
                 <div className="border-t border-[#e5e7eb] pt-4 flex flex-col gap-3">
@@ -604,7 +674,7 @@ export default function ResultsPage() {
                     <table className="w-full text-xs border-collapse">
                       <thead>
                         <tr className="border-b border-[#e5e7eb]">
-                          {["Sensitive Attribute", "Coverage", "Attack Accuracy", "Baseline Accuracy", "Gain over Baseline", "Risk Level"].map(h => (
+                          {["Sensitive Attribute", "Coverage", "Attack Accuracy", "Baseline Accuracy", "Gain over Baseline"].map(h => (
                             <th key={h} className="text-left text-[#364153] font-semibold uppercase tracking-wide py-2 pr-4">{h}</th>
                           ))}
                         </tr>
@@ -617,18 +687,6 @@ export default function ResultsPage() {
                             <td className="py-2 pr-4 text-[#4a5565]">{r.attack.toFixed(1)}%</td>
                             <td className="py-2 pr-4 text-[#4a5565]">{r.baseline.toFixed(1)}%</td>
                             <td className="py-2 pr-4 text-[#4a5565]">{r.gain > 0 ? "+" : ""}{r.gain.toFixed(1)}%</td>
-                            <td className="py-2 pr-4">
-                              <span className={[
-                                "px-2 py-0.5 rounded-full text-xs font-semibold",
-                                r.qualitative_label === "High"
-                                  ? "bg-red-100 text-red-700"
-                                  : r.qualitative_label === "Moderate"
-                                  ? "bg-orange-100 text-orange-700"
-                                  : "bg-green-100 text-green-700",
-                              ].join(" ")}>
-                                {r.qualitative_label}
-                              </span>
-                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -642,7 +700,7 @@ export default function ResultsPage() {
           {/* Section 4: Privacy Risk Overview */}
           <div className="flex flex-col gap-4">
             <SectionTitle>Privacy Risk Overview</SectionTitle>
-            <div className="flex flex-col sm:grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="flex flex-col sm:grid sm:grid-cols-2 lg:grid-cols-5 gap-6">
               {results.riskOverview.map((item) => (
                 <RiskOverviewCard key={item.label} label={item.label} value={item.value} level={item.level} />
               ))}
@@ -678,7 +736,7 @@ export default function ResultsPage() {
               <table className="w-full text-sm border-collapse">
                 <thead>
                   <tr className="bg-[#f9fafb] border-b border-[#e5e7eb]">
-                    {["Rank", "Variable Name", "Risk Score", "Risk Level"].map((h) => (
+                    {["Rank", "Variable Name", "Risk Score"].map((h) => (
                       <th key={h} className="text-left text-[#364153] text-xs font-semibold tracking-wide uppercase px-6 py-3">{h}</th>
                     ))}
                   </tr>
@@ -687,14 +745,10 @@ export default function ResultsPage() {
                   {results.variableRiskRanking.map((row, idx) => {
                     const isLast = idx === results.variableRiskRanking.length - 1;
                     return (
-                      <tr key={row.rank} className={[
-                        row.level === "High" ? "bg-[#fef2f2]" : "bg-white",
-                        !isLast ? "border-b border-[#e5e7eb]" : "",
-                      ].join(" ")}>
+                      <tr key={row.rank} className={!isLast ? "border-b border-[#e5e7eb]" : ""}>
                         <td className="text-[#4a5565] px-6 py-4">{row.rank}</td>
                         <td className="text-[#101828] font-medium px-6 py-4">{row.variable}</td>
                         <td className="text-[#101828] px-6 py-4">{row.score}</td>
-                        <td className="px-6 py-4"><RiskBadge level={row.level as RiskLevel} /></td>
                       </tr>
                     );
                   })}

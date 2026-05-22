@@ -1,4 +1,3 @@
-import RiskBadge from "@/app/components/RiskBadge";
 import type { RiskLevel } from "@/app/results/mockData";
 
 const levelConfig: Record<
@@ -89,7 +88,6 @@ export default function RiskOverviewCard({
         <div className={`${iconBg} w-12 h-12 rounded-[10px] flex items-center justify-center shrink-0`}>
           {icon}
         </div>
-        <RiskBadge level={level} />
       </div>
       <div className="flex flex-col gap-1">
         <p className="text-[#101828] text-2xl font-semibold leading-8">{value}</p>

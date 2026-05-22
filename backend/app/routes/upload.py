@@ -9,8 +9,13 @@ from app.services.validate import (
     extract_columns,
     validate_quasi_and_sensitive_attributes,
 )
-from app.validation import DEFAULT_QIS, DEFAULT_SAS
 from app.services.risk_evaluation import risk_evaluation
+from app.services.progress import (
+    fail_progress,
+    get_progress,
+    init_progress,
+    update_progress,
+)
 from app.database import get_async_db
 from app.repositories import (
     insert_dataset,
@@ -37,14 +42,30 @@ REAL_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 SYNTHETIC_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 
+@router.get("/upload/progress/{job_id}")
+async def upload_progress(job_id: str):
+    progress = get_progress(job_id)
+    if not progress:
+        raise HTTPException(status_code=404, detail="Progress job not found")
+    return progress
+
+
 @router.post("/upload")
 async def upload_datasets(
     real_file: UploadFile = File(...),
     synthetic_file: UploadFile = File(...),
     quasi_identifiers: list[str] = Form(...),
     sensitive_attributes: list[str] = Form(...),
+    job_id: str | None = Form(None),
     db: AsyncSession = Depends(get_async_db),
 ):
+    init_progress(job_id)
+    update_progress(
+        job_id,
+        active_step=0,
+        step_progress=5,
+        message="Upload request received by backend.",
+    )
     logger.info("[UPLOAD_START] Received upload request")
     logger.info(
         f"[UPLOAD_INPUT] Real file: {real_file.filename}, "
@@ -57,18 +78,22 @@ async def upload_datasets(
 
     if not real_file:
         logger.error("[UPLOAD_ERROR] Real dataset file is required")
+        fail_progress(job_id, "Real dataset file is required")
         raise HTTPException(status_code=400, detail="Real dataset file is required")
 
     if not synthetic_file:
         logger.error("[UPLOAD_ERROR] Synthetic dataset file is required")
+        fail_progress(job_id, "Synthetic dataset file is required")
         raise HTTPException(status_code=400, detail="Synthetic dataset file is required")
 
     if not quasi_identifiers:
         logger.error("[UPLOAD_ERROR] At least one quasi identifier is required")
+        fail_progress(job_id, "At least one quasi identifier is required")
         raise HTTPException(status_code=400, detail="At least one quasi identifier is required")
 
     if not sensitive_attributes:
         logger.error("[UPLOAD_ERROR] At least one sensitive attribute is required")
+        fail_progress(job_id, "At least one sensitive attribute is required")
         raise HTTPException(status_code=400, detail="At least one sensitive attribute is required")
 
     real_path = None
@@ -76,6 +101,12 @@ async def upload_datasets(
 
     try:
         logger.info("Starting file save process...")
+        update_progress(
+            job_id,
+            active_step=0,
+            step_progress=15,
+            message="Saving uploaded dataset files.",
+        )
 
         real_stored_filename, real_path, real_size, real_ext = await save_upload_file(
             upload_file=real_file,
@@ -96,6 +127,12 @@ async def upload_datasets(
         )
 
         logger.info("Extracting columns from files...")
+        update_progress(
+            job_id,
+            active_step=0,
+            step_progress=45,
+            message="Reading dataset headers.",
+        )
 
         real_columns = extract_columns(real_path)
         logger.info(
@@ -109,15 +146,17 @@ async def upload_datasets(
             f"{len(synthetic_columns)} columns - {synthetic_columns[:5]}..."
         )
 
-        logger.info("Validating quasi-identifiers and sensitive attributes (using server defaults)...")
+        logger.info("Validating selected quasi-identifiers and sensitive attributes...")
+        update_progress(
+            job_id,
+            active_step=0,
+            step_progress=65,
+            message="Validating selected attributes.",
+        )
 
-        # Use server-side defaults for QIs and SAs to ensure consistent
-        # evaluation regardless of frontend input. This also simplifies
-        # testing and ensures both uniqueness and attribute-inference use
-        # the same columns.
         validated_fields = validate_quasi_and_sensitive_attributes(
-            quasi_identifiers=DEFAULT_QIS,
-            sensitive_attributes=DEFAULT_SAS,
+            quasi_identifiers=quasi_identifiers,
+            sensitive_attributes=sensitive_attributes,
             real_columns=real_columns,
             synthetic_columns=synthetic_columns,
         )
@@ -125,6 +164,12 @@ async def upload_datasets(
         logger.info(
             f"Validation complete. Using QI: {validated_fields['quasi_identifiers']}, "
             f"SA: {validated_fields['sensitive_attributes']}"
+        )
+        update_progress(
+            job_id,
+            active_step=0,
+            step_progress=80,
+            message="Upload and validation complete. Loading datasets.",
         )
 
         logger.info("Reading dataframes into memory...")
@@ -149,7 +194,26 @@ async def upload_datasets(
             f"{synthetic_df.shape[0]} rows, {synthetic_df.shape[1]} columns"
         )
 
+        real_missing_values = int(real_df.isna().sum().sum())
+        synthetic_missing_values = int(synthetic_df.isna().sum().sum())
+        real_cell_count = int(real_df.shape[0] * real_df.shape[1])
+        synthetic_cell_count = int(synthetic_df.shape[0] * synthetic_df.shape[1])
+        real_missing_value_pct = (
+            real_missing_values / real_cell_count * 100 if real_cell_count else 0
+        )
+        synthetic_missing_value_pct = (
+            synthetic_missing_values / synthetic_cell_count * 100
+            if synthetic_cell_count
+            else 0
+        )
+
         logger.info("Getting or creating system user for dataset storage...")
+        update_progress(
+            job_id,
+            active_step=0,
+            step_progress=90,
+            message="Saving dataset metadata.",
+        )
         
         # Create/get a default system user for storing datasets
         system_user_id = await get_or_create_user(
@@ -232,8 +296,26 @@ async def upload_datasets(
         await insert_attributes(db=db, dataset_id=synthetic_dataset_id, attributes=synthetic_attributes)
         
         logger.info(f"Synthetic dataset attributes inserted: {len(synthetic_attributes)} attributes")
+        update_progress(
+            job_id,
+            active_step=0,
+            step_progress=100,
+            message="Upload and validation complete.",
+        )
 
         logger.info("Starting risk evaluation...")
+
+        async def report_evaluation_progress(
+            active_step: int,
+            step_progress: int,
+            message: str,
+        ) -> None:
+            update_progress(
+                job_id,
+                active_step=active_step,
+                step_progress=step_progress,
+                message=message,
+            )
 
         evaluation_result = await risk_evaluation(
             real_uuid=real_dataset_id,
@@ -242,6 +324,7 @@ async def upload_datasets(
             sa_list=validated_fields["sensitive_attributes"],
             real_path=str(real_path),
             synthetic_path=str(synthetic_path),
+            progress_callback=report_evaluation_progress,
         )
 
         logger.info(
@@ -250,6 +333,12 @@ async def upload_datasets(
         )
 
         logger.info("Seeding risk types table...")
+        update_progress(
+            job_id,
+            active_step=3,
+            step_progress=100,
+            message="Saving evaluation results.",
+        )
         
         await seed_risk_types(db=db)
         
@@ -380,6 +469,14 @@ async def upload_datasets(
         )
 
         logger.info("[UPLOAD_COMPLETE] Upload and processing completed successfully")
+        update_progress(
+            job_id,
+            active_step=4,
+            step_progress=100,
+            message="Analysis complete.",
+            completed=True,
+            status="completed",
+        )
 
         return {
             "message": f"Uploaded {real_file.filename} and {synthetic_file.filename} successfully",
@@ -399,6 +496,8 @@ async def upload_datasets(
                 "extension": real_ext,
                 "row_count": len(real_df),
                 "column_count": len(real_df.columns),
+                "missing_values": real_missing_values,
+                "missing_value_pct": real_missing_value_pct,
                 "columns": real_columns,
             },
             "synthetic_file": {
@@ -411,6 +510,8 @@ async def upload_datasets(
                 "extension": synthetic_ext,
                 "row_count": len(synthetic_df),
                 "column_count": len(synthetic_df.columns),
+                "missing_values": synthetic_missing_values,
+                "missing_value_pct": synthetic_missing_value_pct,
                 "columns": synthetic_columns,
             },
             "common_columns": common_columns,
@@ -420,6 +521,7 @@ async def upload_datasets(
 
     except HTTPException as http_exc:
         logger.error(f"[UPLOAD_HTTP_ERROR] HTTP Exception: {http_exc.detail}")
+        fail_progress(job_id, str(http_exc.detail))
 
         if real_path and real_path.exists():
             real_path.unlink()
@@ -436,6 +538,7 @@ async def upload_datasets(
             f"[UPLOAD_EXCEPTION] Unexpected error: {type(e).__name__}: {str(e)}",
             exc_info=True,
         )
+        fail_progress(job_id, f"Unexpected error: {str(e)}")
 
         if real_path and real_path.exists():
             real_path.unlink()

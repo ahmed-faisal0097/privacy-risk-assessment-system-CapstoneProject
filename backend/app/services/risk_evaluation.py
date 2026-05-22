@@ -1,7 +1,7 @@
 import os
 import asyncio
 import logging
-from typing import Any, Dict
+from typing import Any, Awaitable, Callable, Dict
 import pandas as pd
 
 from app.uniqueness import uniqueness_and_rare_combination
@@ -11,6 +11,8 @@ from app.attribute_inference import attribute_inference_evaluation
 
 logger = logging.getLogger(__name__)
 
+ProgressCallback = Callable[[int, int, str], Awaitable[None]]
+
 
 async def risk_evaluation(
     real_uuid: str,
@@ -19,6 +21,7 @@ async def risk_evaluation(
     sa_list: list[str],
     real_path: str,
     synthetic_path: str,
+    progress_callback: ProgressCallback | None = None,
 ) -> Dict[str, Any]:
     """
     Performs privacy risk evaluation on uploaded real and synthetic datasets.
@@ -59,6 +62,13 @@ async def risk_evaluation(
     linkage_summary_json = os.path.join(result_dir, "linkage_summary.json")
 
     # uniqueness risk evaluation 
+    if progress_callback:
+        await progress_callback(
+            1,
+            5,
+            "Running uniqueness and rare combination risk evaluation.",
+        )
+
     logger.info(
         "Starting uniqueness evaluation for real_path=%s synthetic_path=%s",
         real_path,
@@ -82,8 +92,21 @@ async def risk_evaluation(
         out_json,
         out_qid_stats_csv,
     )
+    if progress_callback:
+        await progress_callback(
+            1,
+            100,
+            "Uniqueness and rare combination risk evaluation complete.",
+        )
 
     # linkage / re-identification risk evaluation
+    if progress_callback:
+        await progress_callback(
+            2,
+            5,
+            "Running linkage and re-identification risk evaluation.",
+        )
+
     logger.info(
         "Starting linkage risk evaluation for real_path=%s synthetic_path=%s qis=%s",
         real_path,
@@ -103,6 +126,12 @@ async def risk_evaluation(
         linkage_per_record_csv,
         linkage_summary_json,
     )
+    if progress_callback:
+        await progress_callback(
+            2,
+            100,
+            "Linkage and re-identification risk evaluation complete.",
+        )
 
     # Ensure attribute-inference result directory exists early so it is present
     # even if some attributes fail during evaluation. This mirrors the
@@ -113,6 +142,13 @@ async def risk_evaluation(
 
     attr_files: Dict[str, str] = {}
     attr_summaries: Dict[str, Any] = {}
+
+    if progress_callback:
+        await progress_callback(
+            3,
+            5,
+            "Preparing attribute inference risk evaluation.",
+        )
 
     # Read only headers once to validate sensitive attributes (target columns)
     # cheaply before launching potentially expensive evaluations. We read
@@ -129,6 +165,13 @@ async def risk_evaluation(
             out_attr_csv = os.path.join(attr_result_dir, f"attribute_inference_{sa}.csv")
             attr_files[sa] = out_attr_csv
             attr_summaries[sa] = {"error": f"Failed to read dataset headers: {str(e)}"}
+
+        if progress_callback:
+            await progress_callback(
+                3,
+                100,
+                "Attribute inference risk evaluation finished with header errors.",
+            )
 
         return {
             "real_uuid": real_uuid,
@@ -157,7 +200,16 @@ async def risk_evaluation(
     # summarising metrics per QID set and returns a list of dicts. We wrap
     # each call in try/except to ensure one failing attribute doesn't stop
     # the whole evaluation and the directory is always created.
-    for sa in sa_list:
+    total_sensitive_attributes = max(len(sa_list), 1)
+    for index, sa in enumerate(sa_list):
+        if progress_callback:
+            start_progress = 5 + round((index / total_sensitive_attributes) * 85)
+            await progress_callback(
+                3,
+                start_progress,
+                f"Running attribute inference risk for {sa}.",
+            )
+
         out_attr_csv = os.path.join(attr_result_dir, f"attribute_inference_{sa}.csv")
         # Validate target column exists in both real and synthetic headers
         if sa not in real_columns:
@@ -191,6 +243,14 @@ async def risk_evaluation(
             logger.exception("Attribute-inference failed for %s: %s", sa, str(e))
             attr_files[sa] = out_attr_csv
             attr_summaries[sa] = {"error": str(e)}
+
+        if progress_callback:
+            end_progress = 5 + round(((index + 1) / total_sensitive_attributes) * 85)
+            await progress_callback(
+                3,
+                min(end_progress, 95),
+                f"Attribute inference risk processed for {sa}.",
+            )
 
     # Aggregate per-SA / per-QID metrics into a single CSV for easy reporting.
     # Collect all successful per-QID rows returned by attribute_inference_evaluation
@@ -245,6 +305,13 @@ async def risk_evaluation(
             agg_df.to_csv(aggregated_csv, index=False)
     except Exception:
         aggregated_csv = None
+
+    if progress_callback:
+        await progress_callback(
+            3,
+            100,
+            "Attribute inference risk evaluation complete.",
+        )
 
     return {
         "real_uuid": real_uuid,
