@@ -421,18 +421,14 @@ function PageHeader() {
         }}
       />
       <div className="relative max-w-5xl mx-auto px-6 py-10 flex flex-col items-center text-center gap-4">
-        <div
-          className="w-14 h-14 rounded-2xl flex items-center justify-center shrink-0"
-          style={{
-            background: "rgba(255,255,255,0.10)",
-            border: "1px solid rgba(255,255,255,0.20)",
-            boxShadow:
-              "inset 0 1px 1px rgba(255,255,255,0.20), 0 4px 16px rgba(0,0,0,0.20)",
-            backdropFilter: "blur(8px)",
-          }}
-        >
-          <ShieldIcon />
-        </div>
+        {/* Logo */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/logo.png"
+          alt="Platform Logo"
+          className="w-20 h-20 object-contain"
+          style={{ mixBlendMode: "screen" }}
+        />
         <div
           className="text-[10px] font-semibold tracking-[0.12em] uppercase px-3 py-1 rounded-full"
           style={{
@@ -447,9 +443,6 @@ function PageHeader() {
         <h1 className="text-white text-[28px] font-bold leading-tight tracking-tight">
           Privacy Risk Assessment System
         </h1>
-        <p className="text-sky-200/80 text-sm leading-6 max-w-md font-normal">
-          Enterprise-grade evaluation of privacy risks in synthetic healthcare datasets
-        </p>
       </div>
     </header>
   );
