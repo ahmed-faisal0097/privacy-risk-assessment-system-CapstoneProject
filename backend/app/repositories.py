@@ -1,6 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from .models import Dataset, Attribute, User, RiskType, RiskEvaluation, RiskResult
-import uuid
 
 # Fixed system-defined risk type IDs
 UNIQUENESS_RISK = 1
@@ -10,7 +9,7 @@ ATTRIBUTE_INFERENCE_RISK = 4
 
 async def insert_dataset(
     db: AsyncSession,
-    user_id: str,
+    user_id: int | str,
     dataset_name: str,
     dataset_type: str,
     input_filename: str,
@@ -22,10 +21,10 @@ async def insert_dataset(
     row_count: int = None,
     column_count: int = None,
     status: str = "uploaded"
-) -> str:
-    """Insert a dataset record and return the dataset_id"""
+) -> int:
+    """Insert a dataset record and return the dataset_id."""
     dataset = Dataset(
-        user_id=uuid.UUID(user_id) if isinstance(user_id, str) else user_id,
+        user_id=int(user_id) if isinstance(user_id, str) else user_id,
         dataset_name=dataset_name,
         dataset_type=dataset_type,
         input_filename=input_filename,
@@ -41,17 +40,17 @@ async def insert_dataset(
     db.add(dataset)
     await db.commit()
     await db.refresh(dataset)
-    return str(dataset.dataset_id)
+    return dataset.dataset_id
 
 async def insert_attributes(
     db: AsyncSession,
-    dataset_id: str,
+    dataset_id: int | str,
     attributes: list[dict]
 ) -> None:
-    """Insert multiple attribute records for a dataset"""
+    """Insert multiple attribute records for a dataset."""
     for attr in attributes:
         attribute = Attribute(
-            dataset_id=uuid.UUID(dataset_id) if isinstance(dataset_id, str) else dataset_id,
+            dataset_id=int(dataset_id) if isinstance(dataset_id, str) else dataset_id,
             attribute_name=attr.get("name"),
             is_qi=attr.get("is_qi", False),
             is_sa=attr.get("is_sa", False),
@@ -65,7 +64,7 @@ async def get_or_create_user(
     email: str,
     name: str = None,
     role: str = "analyst"
-) -> str:
+) -> int:
     """Get existing user by email or create a new one. Returns user_id."""
     from sqlalchemy import select
     
@@ -75,7 +74,7 @@ async def get_or_create_user(
     existing_user = result.scalar_one_or_none()
     
     if existing_user:
-        return str(existing_user.user_id)
+        return existing_user.user_id
     
     # Create new user
     new_user = User(
@@ -86,7 +85,7 @@ async def get_or_create_user(
     db.add(new_user)
     await db.commit()
     await db.refresh(new_user)
-    return str(new_user.user_id)
+    return new_user.user_id
 
 async def seed_risk_types(db: AsyncSession) -> None:
     """Seed the risk_types table with fixed integer IDs if not already present."""
@@ -111,18 +110,18 @@ async def seed_risk_types(db: AsyncSession) -> None:
 
 async def create_risk_evaluation(
     db: AsyncSession,
-    user_id: str,
-    real_dataset_id: str,
-    synthetic_dataset_id: str,
+    user_id: int | str,
+    real_dataset_id: int | str,
+    synthetic_dataset_id: int | str,
     selected_qis: list[str],
     selected_sas: list[str],
     status: str = "pending"
-) -> str:
+) -> int:
     """Create a risk evaluation record and return the evaluation_id."""
     evaluation = RiskEvaluation(
-        user_id=uuid.UUID(user_id) if isinstance(user_id, str) else user_id,
-        real_dataset_id=uuid.UUID(real_dataset_id) if isinstance(real_dataset_id, str) else real_dataset_id,
-        synthetic_dataset_id=uuid.UUID(synthetic_dataset_id) if isinstance(synthetic_dataset_id, str) else synthetic_dataset_id,
+        user_id=int(user_id) if isinstance(user_id, str) else user_id,
+        real_dataset_id=int(real_dataset_id) if isinstance(real_dataset_id, str) else real_dataset_id,
+        synthetic_dataset_id=int(synthetic_dataset_id) if isinstance(synthetic_dataset_id, str) else synthetic_dataset_id,
         selected_qis=selected_qis,
         selected_sas=selected_sas,
         status=status
@@ -130,20 +129,20 @@ async def create_risk_evaluation(
     db.add(evaluation)
     await db.commit()
     await db.refresh(evaluation)
-    return str(evaluation.evaluation_id)
+    return evaluation.evaluation_id
 
 async def create_risk_result(
     db: AsyncSession,
-    evaluation_id: str,
+    evaluation_id: int | str,
     risk_type_id: int,
     risk_score: float = None,
     risk_level: str = None,
     risk_summary: str = None,
     result_json: dict = None
-) -> str:
+) -> int:
     """Create a risk result record and return the result_id."""
     risk_result = RiskResult(
-        evaluation_id=uuid.UUID(evaluation_id) if isinstance(evaluation_id, str) else evaluation_id,
+        evaluation_id=int(evaluation_id) if isinstance(evaluation_id, str) else evaluation_id,
         risk_type_id=int(risk_type_id),
         risk_score=risk_score,
         risk_level=risk_level,
@@ -153,11 +152,11 @@ async def create_risk_result(
     db.add(risk_result)
     await db.commit()
     await db.refresh(risk_result)
-    return str(risk_result.result_id)
+    return risk_result.result_id
 
 async def update_risk_evaluation_overall_score(
     db: AsyncSession,
-    evaluation_id: str,
+    evaluation_id: int | str,
     overall_score: float,
     overall_risk_level: str,
     status: str = "completed"
@@ -166,7 +165,7 @@ async def update_risk_evaluation_overall_score(
     from sqlalchemy import update
     stmt = (
         update(RiskEvaluation)
-        .where(RiskEvaluation.evaluation_id == uuid.UUID(evaluation_id) if isinstance(evaluation_id, str) else evaluation_id)
+        .where(RiskEvaluation.evaluation_id == (int(evaluation_id) if isinstance(evaluation_id, str) else evaluation_id))
         .values(
             overall_score=overall_score,
             overall_risk_level=overall_risk_level,

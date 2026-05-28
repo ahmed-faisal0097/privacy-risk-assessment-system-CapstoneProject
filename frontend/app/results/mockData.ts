@@ -27,6 +27,11 @@ export interface AnalysisResults {
   variableRiskChart: Array<{
     variable: string;
     score: number;
+    attackAccuracy?: number;
+    baselineAccuracy?: number;
+    gainOverBaseline?: number;
+    riskScore?: number;
+    explanation?: string;
   }>;
   ageGroupChart: Array<{
     group: string;
@@ -37,6 +42,11 @@ export interface AnalysisResults {
     variable: string;
     score: number;
     level: RiskLevel;
+    attackAccuracy?: number;
+    baselineAccuracy?: number;
+    gainOverBaseline?: number;
+    riskScore?: number;
+    explanation?: string;
   }>;
 }
 

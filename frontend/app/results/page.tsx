@@ -7,7 +7,11 @@ import SummaryCard from "@/app/components/SummaryCard";
 import UploadedFilePanel from "@/app/components/UploadedFilePanel";
 import RiskOverviewCard from "@/app/components/RiskOverviewCard";
 import ResultsCharts from "@/app/components/ResultsCharts";
-import type { AttrInferenceChartRow, KDistChartRow } from "@/app/components/ResultsCharts";
+import type {
+  AttrInferenceChartRow,
+  KDistChartRow,
+  LinkageOutcomeChartRow,
+} from "@/app/components/ResultsCharts";
 import type { AnalysisResults, RiskLevel } from "@/app/results/mockData";
 
 const API_BASE_URL = (
@@ -54,6 +58,24 @@ interface UniquenessSummary {
 }
 
 interface LinkageSummary {
+  total_synthetic_records?: number;
+  exact_match?: {
+    exact_total_synthetic_records?: number;
+    exact_no_match_count?: number;
+    exact_unique_match_count?: number;
+    exact_small_group_match_count?: number;
+    exact_ambiguous_match_count?: number;
+    exact_match_score_pct?: number;
+  };
+  hamming_nearest_neighbour?: {
+    hamming_total_synthetic_records?: number;
+    hamming_high_risk_close_match_count?: number;
+    hamming_medium_risk_close_match_count?: number;
+    hamming_low_risk_distant_match_count?: number;
+    hamming_score_pct?: number;
+    hamming_high_threshold?: number;
+    hamming_medium_threshold?: number;
+  };
   exact_match_score_pct?: number;
   hamming_score_pct?: number;
   overall_linkage_score_pct?: number;
@@ -153,6 +175,20 @@ function normalizeDecimal(value: number | undefined): number {
   return value > 1 ? value / 100 : value;
 }
 
+function pctFromCount(count: number, total: number): number {
+  if (!total) return 0;
+  return parseFloat(((count / total) * 100).toFixed(2));
+}
+
+function formatPct(value: number | undefined, digits = 2): string {
+  if (value == null || Number.isNaN(value)) return "-";
+  return `${value.toFixed(digits)}%`;
+}
+
+function countPctLabel(count: number, pct: number): string {
+  return `${count.toLocaleString()} (${pct.toFixed(1)}%)`;
+}
+
 function getUniquenessSummary(re?: RiskEvaluation): UniquenessSummary | undefined {
   return re?.summary?.uniqueness_and_rare_combination ?? re?.uniqueness_and_rare_combination;
 }
@@ -201,16 +237,30 @@ function buildAttrInferenceChart(
     if (!Array.isArray(val) || val.length === 0) continue;
     // Use the first (and usually only) row per SA — one QID set was passed
     const r = val[0];
+    const baseline = normalizeDecimal(r.baseline_accuracy) * 100;
+    const attack = normalizeDecimal(
+      r.overall_accuracy_with_baseline_fallback ?? r.attack_accuracy_on_covered
+    ) * 100;
+    const gain = r.gain_over_baseline != null
+      ? normalizeDecimal(r.gain_over_baseline) * 100
+      : attack - baseline;
+    const riskScore = Math.max(0, gain);
     rows.push({
       attribute: sa,
-      baseline: parseFloat((normalizeDecimal(r.baseline_accuracy) * 100).toFixed(1)),
-      attack: parseFloat((normalizeDecimal(r.attack_accuracy_on_covered) * 100).toFixed(1)),
-      gain: parseFloat((normalizeDecimal(r.gain_over_baseline) * 100).toFixed(1)),
+      baseline: parseFloat(baseline.toFixed(1)),
+      attack: parseFloat(attack.toFixed(1)),
+      gain: parseFloat(gain.toFixed(1)),
+      riskScore: parseFloat(riskScore.toFixed(1)),
       coverage: parseFloat((normalizeDecimal(r.coverage_rate) * 100).toFixed(1)),
-      qualitative_label: r.qualitative_label ?? "Low",
+      explanation:
+        gain > 0
+          ? "Attack accuracy is higher than baseline, so this attribute has additional inference risk."
+          : gain === 0
+          ? "Attack accuracy is the same as baseline, so no extra information is gained."
+          : "Attack accuracy is lower than baseline, so this does not increase inference risk.",
     });
   }
-  return rows;
+  return rows.sort((a, b) => b.gain - a.gain);
 }
 
 /**
@@ -225,55 +275,174 @@ function buildKDistChart(summary?: UniquenessSummary): KDistChartRow[] {
   const kZero = summary.k_zero_count ?? 0;
   const kOne  = summary.k_one_count ?? 0;
   const kLt5  = summary.k_lt_5_count ?? 0;
-  const kSafe = total - kLt5;
+  const kTwoToFour = Math.max(0, kLt5 - kZero - kOne);
+  const kFiveOrMore = Math.max(0, total - kLt5);
 
   return [
     {
-      category: "k=0 (no match)",
+      category: "k = 0",
+      rule: "No matching real records",
       count: kZero,
-      pct: parseFloat(((kZero / total) * 100).toFixed(2)),
+      pct: pctFromCount(kZero, total),
+      barLabel: countPctLabel(kZero, pctFromCount(kZero, total)),
     },
     {
-      category: "k=1 (unique)",
+      category: "k = 1",
+      rule: "Synthetic record matches exactly one real record",
       count: kOne,
-      pct: parseFloat(((kOne / total) * 100).toFixed(2)),
+      pct: pctFromCount(kOne, total),
+      barLabel: countPctLabel(kOne, pctFromCount(kOne, total)),
     },
     {
-      category: "k<5 (rare)",
-      count: kLt5,
-      pct: parseFloat(((kLt5 / total) * 100).toFixed(2)),
+      category: "2 <= k < 5",
+      rule: "Synthetic record matches 2 to 4 real records",
+      count: kTwoToFour,
+      pct: pctFromCount(kTwoToFour, total),
+      barLabel: countPctLabel(kTwoToFour, pctFromCount(kTwoToFour, total)),
     },
     {
-      category: "k≥5 (safe)",
-      count: kSafe,
-      pct: parseFloat(((kSafe / total) * 100).toFixed(2)),
+      category: "k >= 5",
+      rule: "Synthetic record matches 5 or more real records",
+      count: kFiveOrMore,
+      pct: pctFromCount(kFiveOrMore, total),
+      barLabel: countPctLabel(kFiveOrMore, pctFromCount(kFiveOrMore, total)),
     },
   ];
 }
 
+function buildLinkageOutcomeChart(summary?: LinkageSummary): LinkageOutcomeChartRow[] {
+  if (!summary) return [];
+
+  const exact = summary.exact_match;
+  const hamming = summary.hamming_nearest_neighbour;
+  const exactTotal = exact?.exact_total_synthetic_records ?? summary.total_synthetic_records ?? 0;
+  const hammingTotal = hamming?.hamming_total_synthetic_records ?? summary.total_synthetic_records ?? 0;
+  const highThreshold = hamming?.hamming_high_threshold ?? 0.1;
+  const mediumThreshold = hamming?.hamming_medium_threshold ?? 0.3;
+  const rows: LinkageOutcomeChartRow[] = [];
+
+  if (exactTotal || exact) {
+    const noMatch = exact?.exact_no_match_count ?? 0;
+    const unique = exact?.exact_unique_match_count ?? 0;
+    const small = exact?.exact_small_group_match_count ?? 0;
+    const ambiguous = exact?.exact_ambiguous_match_count ?? 0;
+    rows.push(
+      {
+        method: "Exact matching",
+        category: "No match",
+        xLabel: "No match",
+        rule: "0 matching real records",
+        count: noMatch,
+        pct: pctFromCount(noMatch, exactTotal),
+        barLabel: countPctLabel(noMatch, pctFromCount(noMatch, exactTotal)),
+      },
+      {
+        method: "Exact matching",
+        category: "Unique",
+        xLabel: "Unique",
+        rule: "Exactly 1 matching real record",
+        count: unique,
+        pct: pctFromCount(unique, exactTotal),
+        barLabel: countPctLabel(unique, pctFromCount(unique, exactTotal)),
+      },
+      {
+        method: "Exact matching",
+        category: "Small group",
+        xLabel: "Small group",
+        rule: "2 to 5 matching real records",
+        count: small,
+        pct: pctFromCount(small, exactTotal),
+        barLabel: countPctLabel(small, pctFromCount(small, exactTotal)),
+      },
+      {
+        method: "Exact matching",
+        category: "Ambiguous group",
+        xLabel: "Ambiguous group",
+        rule: "More than 5 matching real records",
+        count: ambiguous,
+        pct: pctFromCount(ambiguous, exactTotal),
+        barLabel: countPctLabel(ambiguous, pctFromCount(ambiguous, exactTotal)),
+      }
+    );
+  }
+
+  if (hammingTotal || hamming) {
+    const close = hamming?.hamming_high_risk_close_match_count ?? 0;
+    const moderate = hamming?.hamming_medium_risk_close_match_count ?? 0;
+    const distant = hamming?.hamming_low_risk_distant_match_count ?? 0;
+    rows.push(
+      {
+        method: "Hamming nearest-neighbour",
+        category: "Close",
+        xLabel: "Close",
+        rule: `Hamming distance <= ${highThreshold}`,
+        count: close,
+        pct: pctFromCount(close, hammingTotal),
+        barLabel: countPctLabel(close, pctFromCount(close, hammingTotal)),
+      },
+      {
+        method: "Hamming nearest-neighbour",
+        category: "Moderate",
+        xLabel: "Moderate",
+        rule: `${highThreshold} < Hamming distance <= ${mediumThreshold}`,
+        count: moderate,
+        pct: pctFromCount(moderate, hammingTotal),
+        barLabel: countPctLabel(moderate, pctFromCount(moderate, hammingTotal)),
+      },
+      {
+        method: "Hamming nearest-neighbour",
+        category: "Distant",
+        xLabel: "Distant",
+        rule: `Hamming distance > ${mediumThreshold}`,
+        count: distant,
+        pct: pctFromCount(distant, hammingTotal),
+        barLabel: countPctLabel(distant, pctFromCount(distant, hammingTotal)),
+      }
+    );
+  }
+
+  return rows;
+}
+
 /**
- * Build variable risk chart — one bar per SA, scored 0–10.
- * Uses risk_score (coverage × gain) from attribute inference results.
+ * Build variable risk chart - one bar per SA.
+ * Risk Score = max(0, Gain Over Baseline).
  */
 function buildVariableRiskChart(
   attrSummary?: Record<string, AttrInferenceRow[] | { error: string }>
 ): AnalysisResults["variableRiskChart"] {
   if (!attrSummary) return [];
 
-  const entries: { variable: string; score: number }[] = [];
+  const entries: AnalysisResults["variableRiskChart"] = [];
   for (const [sa, val] of Object.entries(attrSummary)) {
     if (!Array.isArray(val) || val.length === 0) continue;
-    const raw = Math.max(
-      ...val.map((r) =>
-        normalizeDecimal(r.risk_score ?? (r.coverage_rate ?? 0) * (r.gain_over_baseline ?? 0))
-      )
-    );
-    // risk_score is 0–1; scale to 0–10
-    entries.push({ variable: sa, score: parseFloat((raw * 10).toFixed(2)) });
+    const r = val[0];
+    const baseline = normalizeDecimal(r.baseline_accuracy) * 100;
+    const attack = normalizeDecimal(
+      r.overall_accuracy_with_baseline_fallback ?? r.attack_accuracy_on_covered
+    ) * 100;
+    const gain = r.gain_over_baseline != null
+      ? normalizeDecimal(r.gain_over_baseline) * 100
+      : attack - baseline;
+    const riskScore = Math.max(0, gain);
+    entries.push({
+      variable: sa,
+      score: parseFloat(riskScore.toFixed(1)),
+      attackAccuracy: parseFloat(attack.toFixed(1)),
+      baselineAccuracy: parseFloat(baseline.toFixed(1)),
+      gainOverBaseline: parseFloat(gain.toFixed(1)),
+      riskScore: parseFloat(riskScore.toFixed(1)),
+      explanation:
+        gain > 0
+          ? "Attack accuracy is higher than baseline, so this attribute has additional inference risk."
+          : gain === 0
+          ? "Attack accuracy is the same as baseline, so no extra information is gained."
+          : "Attack accuracy is lower than baseline, so this does not increase inference risk.",
+    });
   }
 
   if (entries.length === 0) return [];
-  return entries.sort((a, b) => a.score - b.score);
+  return entries.sort((a, b) => (b.gainOverBaseline ?? 0) - (a.gainOverBaseline ?? 0));
 }
 
 /**
@@ -284,21 +453,39 @@ function buildAttrRanking(
 ): AnalysisResults["variableRiskRanking"] {
   if (!attrSummary) return [];
 
-  const rows: { variable: string; score: number; level: RiskLevel }[] = [];
+  const rows: AnalysisResults["variableRiskRanking"] = [];
   for (const [sa, val] of Object.entries(attrSummary)) {
     if (!Array.isArray(val) || val.length === 0) continue;
-    const raw = Math.max(
-      ...val.map((r) =>
-        normalizeDecimal(r.risk_score ?? (r.coverage_rate ?? 0) * (r.gain_over_baseline ?? 0))
-      )
-    );
-    const level = pctLevel(raw * 100, 20, 10);
-    rows.push({ variable: sa, score: parseFloat(raw.toFixed(4)), level });
+    const r = val[0];
+    const baseline = normalizeDecimal(r.baseline_accuracy) * 100;
+    const attack = normalizeDecimal(
+      r.overall_accuracy_with_baseline_fallback ?? r.attack_accuracy_on_covered
+    ) * 100;
+    const gain = r.gain_over_baseline != null
+      ? normalizeDecimal(r.gain_over_baseline) * 100
+      : attack - baseline;
+    const riskScore = Math.max(0, gain);
+    rows.push({
+      rank: 0,
+      variable: sa,
+      score: parseFloat(riskScore.toFixed(1)),
+      level: pctLevel(riskScore, 20, 10),
+      attackAccuracy: parseFloat(attack.toFixed(1)),
+      baselineAccuracy: parseFloat(baseline.toFixed(1)),
+      gainOverBaseline: parseFloat(gain.toFixed(1)),
+      riskScore: parseFloat(riskScore.toFixed(1)),
+      explanation:
+        gain > 0
+          ? "Attack accuracy is higher than baseline, so this attribute has additional inference risk."
+          : gain === 0
+          ? "Attack accuracy is the same as baseline, so no extra information is gained."
+          : "Attack accuracy is lower than baseline, so this does not increase inference risk.",
+    });
   }
 
   if (rows.length === 0) return [];
-  rows.sort((a, b) => b.score - a.score);
-  return rows.map((r, i) => ({ rank: i + 1, ...r }));
+  rows.sort((a, b) => (b.riskScore ?? 0) - (a.riskScore ?? 0));
+  return rows.map((r, i) => ({ ...r, rank: i + 1 }));
 }
 
 /**
@@ -543,6 +730,7 @@ export default function ResultsPage() {
   // Build the two new real chart datasets
   const attrInferenceChart = buildAttrInferenceChart(attrSummary);
   const kDistChart = buildKDistChart(uniquenessSummary);
+  const linkageOutcomeChart = buildLinkageOutcomeChart(linkageSummary);
 
   return (
     <div className="min-h-screen bg-[#f9fafb] flex flex-col">
@@ -596,22 +784,34 @@ export default function ResultsPage() {
 
           {/* Section 3: Analysis Configuration + real uniqueness numbers */}
           {(apiResult.quasi_identifiers?.length || apiResult.sensitive_attributes?.length) && (
-            <div className="bg-white border border-[#e5e7eb] rounded-[14px] shadow-sm p-8 flex flex-col gap-6">
+            <div className="bg-white border border-[#e5e7eb] rounded-[14px] shadow-sm p-6 sm:p-8 flex flex-col gap-8">
               <div className="flex flex-col gap-2">
                 <SectionTitle>Analysis Configuration</SectionTitle>
                 <p className="text-[#4a5565] text-sm leading-5">Columns selected for this analysis run</p>
               </div>
-              <div className="flex flex-col sm:flex-row gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 {apiResult.quasi_identifiers?.length ? (
-                  <div className="flex-1 flex flex-col gap-2">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#2b7fff]">Quasi Identifiers</p>
-                    <p className="text-sm text-[#364153] leading-6">{apiResult.quasi_identifiers.join(", ")}</p>
+                  <div className="rounded-[12px] border border-[#dbeafe] bg-[#eff6ff] p-4 flex flex-col gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#155dfc]">Quasi-identifiers</p>
+                    <div className="flex flex-wrap gap-2">
+                      {apiResult.quasi_identifiers.map((column) => (
+                        <span key={column} className="rounded-[8px] bg-white border border-[#bfdbfe] px-2.5 py-1 text-xs text-[#1e3a8a]">
+                          {column}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 ) : null}
                 {apiResult.sensitive_attributes?.length ? (
-                  <div className="flex-1 flex flex-col gap-2">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#009689]">Sensitive Attributes</p>
-                    <p className="text-sm text-[#364153] leading-6">{apiResult.sensitive_attributes.join(", ")}</p>
+                  <div className="rounded-[12px] border border-[#ccfbf1] bg-[#f0fdfa] p-4 flex flex-col gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#007a6e]">Sensitive attributes</p>
+                    <div className="flex flex-wrap gap-2">
+                      {apiResult.sensitive_attributes.map((column) => (
+                        <span key={column} className="rounded-[8px] bg-white border border-[#99f6e4] px-2.5 py-1 text-xs text-[#115e59]">
+                          {column}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -620,24 +820,27 @@ export default function ResultsPage() {
               {uniquenessSummary && (() => {
                 const s = uniquenessSummary;
                 return (
-                  <div className="border-t border-[#e5e7eb] pt-4 flex flex-col gap-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#364153]">
+                  <div className="rounded-[12px] border border-[#e5e7eb] bg-[#fbfcfd] p-5 flex flex-col gap-4">
+                    <p className="text-sm font-semibold text-[#101828]">
                       Uniqueness &amp; Rare-Combination Results
                     </p>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-                      <div>
+                    <p className="text-sm text-[#4a5565] leading-6">
+                     For each synthetic record, the number of real records sharing the same quasi-identifier values is counted. This count is referred to as <code>k</code>. A record with <code>k=1</code> maps to exactly one real individual, which represents a direct re-identification risk. Records with <code>k&lt;5</code> are classified as rare. The uniqueness score is the percentage of synthetic records where <code>k=1</code>.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3">
                         <p className="text-[#4a5565] text-xs">Uniqueness Score</p>
                         <p className="font-semibold text-[#101828]">{s.uniqueness_score_pct?.toFixed(2) ?? "—"}%</p>
                       </div>
-                      <div>
+                      <div className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3">
                         <p className="text-[#4a5565] text-xs">Rare Combination Score</p>
                         <p className="font-semibold text-[#101828]">{s.rare_combination_score_pct?.toFixed(2) ?? "—"}%</p>
                       </div>
-                      <div>
-                        <p className="text-[#4a5565] text-xs">Unique Records (k=1)</p>
+                      <div className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3">
+                        <p className="text-[#4a5565] text-xs">Unique Records (k = 1)</p>
                         <p className="font-semibold text-[#101828]">{s.k_one_count?.toLocaleString() ?? "—"}</p>
                       </div>
-                      <div>
+                      <div className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3">
                         <p className="text-[#4a5565] text-xs">Total Synthetic Records</p>
                         <p className="font-semibold text-[#101828]">{s.total_synthetic_records?.toLocaleString() ?? "—"}</p>
                       </div>
@@ -647,16 +850,29 @@ export default function ResultsPage() {
               })()}
 
               {linkageSummary && (
-                <div className="border-t border-[#e5e7eb] pt-4 flex flex-col gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[#364153]">
+                <div className="rounded-[12px] border border-[#e5e7eb] bg-[#fbfcfd] p-5 flex flex-col gap-4">
+                  <p className="text-sm font-semibold text-[#101828]">
                     Linkage &amp; Re-identification Results
                   </p>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
-                    <div>
+                  <div className="flex flex-col gap-2 text-sm text-[#4a5565] leading-6">
+                    <p>Two separate linkage methods are used.</p>
+                    <p>
+                      <strong>Exact-match linkage</strong> checks whether a synthetic record has an
+                      identical match in the real dataset across all selected QI columns. A unique
+                      exact match means only one real person shares those values.
+                    </p>
+                    <p>
+                      <strong>Hamming nearest-neighbour linkage</strong> finds the closest real record
+                      to each synthetic record using Hamming distance across QI columns. A distance of
+                      0.0 is identical; 1.0 is completely different.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3">
                       <p className="text-[#4a5565] text-xs">Exact Match Score</p>
                       <p className="font-semibold text-[#101828]">{linkageSummary.exact_match_score_pct?.toFixed(2) ?? "—"}%</p>
                     </div>
-                    <div>
+                    <div className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3">
                       <p className="text-[#4a5565] text-xs">Hamming Score</p>
                       <p className="font-semibold text-[#101828]">{linkageSummary.hamming_score_pct?.toFixed(2) ?? "—"}%</p>
                     </div>
@@ -666,27 +882,44 @@ export default function ResultsPage() {
 
               {/* Attribute inference summary panel */}
               {attrInferenceChart.length > 0 && (
-                <div className="border-t border-[#e5e7eb] pt-4 flex flex-col gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[#364153]">
-                    Attribute Inference Results (per sensitive attribute)
+                <div className="rounded-[12px] border border-[#e5e7eb] bg-[#fbfcfd] p-5 flex flex-col gap-4">
+                  <p className="text-sm font-semibold text-[#101828]">
+                    Attribute Inference Results
                   </p>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs border-collapse">
+                  <p className="text-sm text-[#4a5565] leading-6">
+                    A majority-label attack is simulated for each sensitive attribute. The attacker uses the selected QI columns to look up the most common value of that sensitive attribute in the real dataset for each QI combination, then predicts that value for synthetic records. The gain over baseline measures how much better this attack performs compared to always predicting the single most common overall value. A high gain indicates that the QI columns reveal information about the sensitive attribute. Results are shown separately for each sensitive attribute.
+                  </p>
+                  <p className="text-sm text-[#4a5565] leading-6">
+                    <strong>Attack accuracy</strong> is the share of synthetic records where the QI-based majority-label prediction matches the true sensitive value. <strong>Baseline accuracy</strong> is the share of records correctly predicted by always guessing the single most common overall sensitive value.
+                  </p>
+                  <div className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3 text-sm text-[#364153]">
+                    <div>
+                      <span className="font-semibold">Gain Over Baseline:</span>{" "}
+                      <span className="font-mono">Attack Accuracy - Baseline Accuracy</span>
+                    </div>
+                    <div className="mt-1">
+                      <span className="font-semibold">Risk Score:</span>{" "}
+                      <span className="font-mono">max(0, Gain Over Baseline)</span>
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto rounded-[10px] border border-[#e5e7eb] bg-white">
+                    <table className="w-full min-w-[720px] text-sm border-collapse">
                       <thead>
-                        <tr className="border-b border-[#e5e7eb]">
-                          {["Sensitive Attribute", "Coverage", "Attack Accuracy", "Baseline Accuracy", "Gain over Baseline"].map(h => (
-                            <th key={h} className="text-left text-[#364153] font-semibold uppercase tracking-wide py-2 pr-4">{h}</th>
+                        <tr className="bg-[#f9fafb] border-b border-[#e5e7eb]">
+                          {["Sensitive Attribute", "Coverage", "Attack Accuracy", "Baseline Accuracy", "Gain over Baseline", "Risk Score"].map(h => (
+                            <th key={h} className="text-left text-[#364153] text-xs font-semibold uppercase tracking-wide px-4 py-3">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {attrInferenceChart.map((r, i) => (
                           <tr key={i} className="border-b border-[#f3f4f6]">
-                            <td className="py-2 pr-4 font-medium text-[#101828]">{r.attribute}</td>
-                            <td className="py-2 pr-4 text-[#4a5565]">{r.coverage.toFixed(1)}%</td>
-                            <td className="py-2 pr-4 text-[#4a5565]">{r.attack.toFixed(1)}%</td>
-                            <td className="py-2 pr-4 text-[#4a5565]">{r.baseline.toFixed(1)}%</td>
-                            <td className="py-2 pr-4 text-[#4a5565]">{r.gain > 0 ? "+" : ""}{r.gain.toFixed(1)}%</td>
+                            <td className="px-4 py-3 font-medium text-[#101828]">{r.attribute}</td>
+                            <td className="px-4 py-3 text-[#4a5565]">{r.coverage.toFixed(1)}%</td>
+                            <td className="px-4 py-3 text-[#4a5565]">{r.attack.toFixed(1)}%</td>
+                            <td className="px-4 py-3 text-[#4a5565]">{r.baseline.toFixed(1)}%</td>
+                            <td className="px-4 py-3 text-[#4a5565]">{r.gain > 0 ? "+" : ""}{r.gain.toFixed(1)}%</td>
+                            <td className="px-4 py-3 text-[#4a5565]">{r.gain < 0 ? "No additional inference risk" : `${r.riskScore.toFixed(1)}%`}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -726,35 +959,8 @@ export default function ResultsPage() {
               ageGroupChart={results.ageGroupChart}
               attrInferenceChart={attrInferenceChart}
               kDistChart={kDistChart}
+              linkageOutcomeChart={linkageOutcomeChart}
             />
-          </div>
-
-          {/* Section 6: Variable Risk Ranking */}
-          <div className="flex flex-col gap-4">
-            <SectionTitle>Variable Risk Ranking</SectionTitle>
-            <div className="bg-white border border-[#e5e7eb] rounded-[14px] shadow-sm overflow-hidden">
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr className="bg-[#f9fafb] border-b border-[#e5e7eb]">
-                    {["Rank", "Variable Name", "Risk Score"].map((h) => (
-                      <th key={h} className="text-left text-[#364153] text-xs font-semibold tracking-wide uppercase px-6 py-3">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {results.variableRiskRanking.map((row, idx) => {
-                    const isLast = idx === results.variableRiskRanking.length - 1;
-                    return (
-                      <tr key={row.rank} className={!isLast ? "border-b border-[#e5e7eb]" : ""}>
-                        <td className="text-[#4a5565] px-6 py-4">{row.rank}</td>
-                        <td className="text-[#101828] font-medium px-6 py-4">{row.variable}</td>
-                        <td className="text-[#101828] px-6 py-4">{row.score}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
           </div>
 
           {/* Section 7: Action Buttons */}

@@ -12,7 +12,7 @@ DROP TABLE IF EXISTS users CASCADE;
 
 -- Create users table
 CREATE TABLE users (
-    user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     name VARCHAR NOT NULL,
     email VARCHAR UNIQUE NOT NULL,
     role VARCHAR NOT NULL,
@@ -21,8 +21,8 @@ CREATE TABLE users (
 
 -- Create datasets table
 CREATE TABLE datasets (
-    dataset_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    dataset_id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     dataset_name VARCHAR NOT NULL,
     dataset_type VARCHAR NOT NULL CHECK (dataset_type IN ('real', 'synthetic')),
     input_filename VARCHAR NOT NULL,
@@ -39,8 +39,8 @@ CREATE TABLE datasets (
 
 -- Create attributes table
 CREATE TABLE attributes (
-    attribute_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    dataset_id UUID NOT NULL REFERENCES datasets(dataset_id) ON DELETE CASCADE,
+    attribute_id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    dataset_id INTEGER NOT NULL REFERENCES datasets(dataset_id) ON DELETE CASCADE,
     attribute_name VARCHAR NOT NULL,
     is_qi BOOLEAN DEFAULT FALSE,
     is_sa BOOLEAN DEFAULT FALSE,
@@ -56,10 +56,10 @@ CREATE TABLE risk_types (
 
 -- Create risk_evaluations table
 CREATE TABLE risk_evaluations (
-    evaluation_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    real_dataset_id UUID REFERENCES datasets(dataset_id),
-    synthetic_dataset_id UUID REFERENCES datasets(dataset_id),
+    evaluation_id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    real_dataset_id INTEGER REFERENCES datasets(dataset_id),
+    synthetic_dataset_id INTEGER REFERENCES datasets(dataset_id),
     evaluated_time TIMESTAMPTZ DEFAULT NOW(),
     status VARCHAR DEFAULT 'pending',
     overall_score NUMERIC(8,4),
@@ -70,8 +70,8 @@ CREATE TABLE risk_evaluations (
 
 -- Create risk_results table
 CREATE TABLE risk_results (
-    result_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    evaluation_id UUID NOT NULL REFERENCES risk_evaluations(evaluation_id) ON DELETE CASCADE,
+    result_id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    evaluation_id INTEGER NOT NULL REFERENCES risk_evaluations(evaluation_id) ON DELETE CASCADE,
     risk_type_id INTEGER NOT NULL REFERENCES risk_types(risk_type_id),
     risk_score NUMERIC(8,4),
     risk_summary TEXT,
@@ -83,9 +83,9 @@ CREATE TABLE risk_results (
 
 -- Create reports table
 CREATE TABLE reports (
-    report_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    evaluation_id UUID NOT NULL REFERENCES risk_evaluations(evaluation_id) ON DELETE CASCADE,
-    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    report_id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    evaluation_id INTEGER NOT NULL REFERENCES risk_evaluations(evaluation_id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     report_type VARCHAR NOT NULL,
     report_name VARCHAR NOT NULL,
     report_path VARCHAR,
