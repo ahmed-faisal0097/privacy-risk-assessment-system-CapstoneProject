@@ -210,12 +210,13 @@ def generate_html(data: dict, out_path: str) -> None:
     exact_detail   = link.get("exact_match", {})
     hamming_detail = link.get("hamming_nearest_neighbour", {})
 
-    exact_high      = exact_detail.get("exact_unique_link_count", 0)
-    exact_medium    = exact_detail.get("exact_small_group_count", 0)
-    exact_none      = exact_detail.get("exact_no_link_count", 0)
-    # Ambiguous = matched multiple real people (not uniquely linkable = low risk)
-    # Merge with no-link count for the pie chart since both represent non-identifiable records
-    exact_low_total = int(exact_none) + max(0, int(total_syn) - int(exact_high) - int(exact_medium) - int(exact_none))
+    exact_high      = exact_detail.get("exact_unique_match_count", 0)
+    exact_medium    = exact_detail.get("exact_small_group_match_count", 0)
+    exact_none      = exact_detail.get("exact_no_match_count", 0)
+    exact_ambiguous = exact_detail.get("exact_ambiguous_match_count", 0)
+    # Ambiguous = matched more than 5 real people (not uniquely linkable = low risk)
+    # Merge ambiguous and no-match into one green slice since neither can be pinpointed
+    exact_low_total = int(exact_none) + int(exact_ambiguous)
 
     hamming_high   = hamming_detail.get("hamming_high_risk_close_match_count", 0)
     hamming_medium = hamming_detail.get("hamming_medium_risk_close_match_count", 0)
@@ -267,7 +268,7 @@ def generate_html(data: dict, out_path: str) -> None:
             ["Records with k=0 (no match in real data)", _fmt_num(k_zero),
              _fmt_pct(k_zero / total_syn * 100 if total_syn else 0),
              _badge("HIGH" if int(k_zero) > 0 else "LOW")],
-            ["Records with k=1 (unique — maps to exactly one real person)", _fmt_num(k_one),
+            ["Records with k=1 (unique, maps to exactly one real person)", _fmt_num(k_one),
              _fmt_pct(uniq_pct), _badge(uniq_level)],
             ["Records with k&lt;5 (rare — fewer than 5 real matches)", _fmt_num(k_lt5),
              _fmt_pct(rare_pct), _badge(rare_level)],
@@ -280,13 +281,13 @@ def generate_html(data: dict, out_path: str) -> None:
         ["Risk Level", "Score Range", "Meaning", "Recommended Action"],
         [
             [_badge("HIGH"), "≥ 20%",
-             "Too many synthetic records are unique — an attacker can directly link them to real individuals",
+             "Too many synthetic records are unique. An attacker can directly link them to real individuals.",
              "Do not release"],
             [_badge("MEDIUM"), "10% – 19.99%",
-             "Some synthetic records are too similar to real records — limited privacy coverage in some QI combinations",
+             "Some synthetic records are too similar to real records. Limited privacy coverage in some QI combinations.",
              "Review carefully"],
             [_badge("LOW"), "< 10%",
-             "Synthetic records are well covered — most do not closely resemble any single real person",
+             "Synthetic records are well covered. Most do not closely resemble any single real person.",
              "Acceptable"],
         ]
     )
@@ -301,6 +302,9 @@ def generate_html(data: dict, out_path: str) -> None:
             ["Exact Match", "Records in a small group (2–5 real matches)",
              _fmt_num(exact_medium),
              _badge("MEDIUM" if int(exact_medium) > 0 else "LOW")],
+            ["Exact Match", "Records with ambiguous match (more than 5 real matches)",
+             _fmt_num(exact_ambiguous),
+             _badge("LOW")],
             ["Exact Match", "Records with no exact link found",
              _fmt_num(exact_none),
              _badge("LOW")],
@@ -324,13 +328,13 @@ def generate_html(data: dict, out_path: str) -> None:
         ["Risk Level", "Score Range", "Meaning", "Recommended Action"],
         [
             [_badge("HIGH"), "≥ 30%",
-             "Most synthetic records can be closely matched to real individuals — re-identification is very likely",
+             "Most synthetic records can be closely matched to real individuals. Re-identification is very likely.",
              "Do not release"],
             [_badge("MEDIUM"), "10% – 29.99%",
-             "A portion of synthetic records are close enough to real records to be linkable",
+             "A portion of synthetic records are close enough to real records to be linkable.",
              "Review carefully"],
             [_badge("LOW"), "< 10%",
-             "Synthetic records are different enough from real records that linking them is difficult",
+             "Synthetic records are different enough from real records that linking them is difficult.",
              "Acceptable"],
         ]
     )
@@ -364,13 +368,13 @@ def generate_html(data: dict, out_path: str) -> None:
         ["Risk Level", "Gain Over Baseline", "Meaning", "Recommended Action"],
         [
             [_badge("HIGH"), "≥ 0.20",
-             "Knowing the QI values gives the attacker a strong advantage in guessing the sensitive attribute",
+             "Knowing the QI values gives the attacker a strong advantage in guessing the sensitive attribute.",
              "Do not release"],
             [_badge("MEDIUM"), "0.10 – 0.19",
-             "The QI values give the attacker some advantage in guessing the sensitive attribute",
+             "The QI values give the attacker some advantage in guessing the sensitive attribute.",
              "Review carefully"],
             [_badge("LOW"), "< 0.10",
-             "Knowing the QI values barely helps — the attacker cannot reliably predict the sensitive attribute",
+             "Knowing the QI values barely helps. The attacker cannot reliably predict the sensitive attribute.",
              "Acceptable"],
         ]
     )
@@ -403,7 +407,7 @@ def generate_html(data: dict, out_path: str) -> None:
     for r in sa_rows:
         try:
             attr_chart_data.append({
-                "label": r.get("id", "—"),
+                "label": r.get("id") or "Unknown",
                 "max_risk": round(float(r.get("max_risk", 0)) * 100, 4),
                 "mean_risk": round(float(r.get("mean_risk", 0)) * 100, 4),
             })
@@ -636,13 +640,15 @@ def generate_html(data: dict, out_path: str) -> None:
       datasets: [{{
         data: data.map(d => d.count),
         backgroundColor: data.map(d => d.color),
-        borderWidth: data.length === 1 ? 0 : 1,
+        borderWidth: 0,
       }}]
     }},
     options: {{
       responsive: true,
       plugins: {{
-        legend: {{ position: 'bottom', labels: {{ font: {{ size: 11 }} }} }},
+        legend: {{ position: 'bottom', labels: {{ font: {{ size: 11 }},
+          filter: (item, chart) => chart.datasets[0].data[item.index] > 0
+        }} }},
         tooltip: {{
           callbacks: {{
             label: ctx => {{
@@ -670,13 +676,15 @@ def generate_html(data: dict, out_path: str) -> None:
       datasets: [{{
         data: data.map(d => d.count),
         backgroundColor: data.map(d => d.color),
-        borderWidth: data.length === 1 ? 0 : 1,
+        borderWidth: 0,
       }}]
     }},
     options: {{
       responsive: true,
       plugins: {{
-        legend: {{ position: 'bottom', labels: {{ font: {{ size: 11 }} }} }},
+        legend: {{ position: 'bottom', labels: {{ font: {{ size: 11 }},
+          filter: (item, chart) => chart.datasets[0].data[item.index] > 0
+        }} }},
         tooltip: {{
           callbacks: {{
             label: ctx => {{
