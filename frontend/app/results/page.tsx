@@ -890,7 +890,8 @@ export default function ResultsPage() {
                     A majority-label attack is simulated for each sensitive attribute. The attacker uses the selected QI columns to look up the most common value of that sensitive attribute in the real dataset for each QI combination, then predicts that value for synthetic records. The gain over baseline measures how much better this attack performs compared to always predicting the single most common overall value. A high gain indicates that the QI columns reveal information about the sensitive attribute. Results are shown separately for each sensitive attribute.
                   </p>
                   <p className="text-sm text-[#4a5565] leading-6">
-                    <strong>Attack accuracy</strong> is the share of synthetic records where the QI-based majority-label prediction matches the true sensitive value. <strong>Baseline accuracy</strong> is the share of records correctly predicted by always guessing the single most common overall sensitive value.
+                    <strong>Attack accuracy</strong> is how often someone can correctly infer a person’s sensitive information using matching or similar QI (quasi-identifier) patterns from other records.<br />
+                    <strong>Baseline accuracy</strong> is how often someone would be correct if they simply guessed the most common sensitive value for all records.
                   </p>
                   <div className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3 text-sm text-[#364153]">
                     <div>
