@@ -67,6 +67,18 @@ def _score_card(label: str, value: str, desc: str) -> str:
         <div style="font-size:12px;color:#718096;">{desc}</div>
       </div>"""
 
+def _risk_overview_card(label: str, value: str, level: str) -> str:
+    bg  = {"HIGH": "#fff5f5", "MEDIUM": "#fffaf0", "LOW": "#f0fff4"}.get(level, "#fff")
+    bdr = {"HIGH": "#c53030", "MEDIUM": "#c05621", "LOW": "#276749"}.get(level, "#2b6cb0")
+    return f"""
+      <div style="background:{bg};border-left:5px solid {bdr};border-radius:10px;
+                  padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.08);
+                  min-width:160px;flex:1;">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;
+                    letter-spacing:0.6px;color:#718096;white-space:nowrap;">{label}</div>
+        <div style="font-size:24px;font-weight:800;margin:4px 0 0;color:{bdr};">{value}</div>
+      </div>"""
+
 def _chips(names: list, colour: str, bg: str, border: str) -> str:
     return "".join(
         f'<span style="border-radius:999px;padding:4px 14px;font-size:12px;font-weight:600;'
@@ -131,7 +143,6 @@ def load_all_results(result_dir: str = None) -> dict:
     if result_dir is None:
         result_dir = _find_latest_result_dir()
 
-    # Attribute inference results live in the matching r2_attr_* folder
     attr_dir = result_dir.replace("r1_uniq_", "r2_attr_")
 
     out = {
@@ -180,27 +191,31 @@ def generate_html(data: dict, out_path: str) -> None:
     qi_list   = data.get("qi_list", [])
     sa_list   = data.get("sa_list", [])
 
-    # Uniqueness
+    # ── Uniqueness values ──────────────────────────────────────────────────────
     uniq_pct  = float(uniq.get("uniqueness_score_pct", 0))
     rare_pct  = float(uniq.get("rare_combination_score_pct", 0))
     k_zero    = uniq.get("k_zero_count", 0)
     k_one     = uniq.get("k_one_count", 0)
     k_lt5     = uniq.get("k_lt_5_count", 0)
     total_syn = uniq.get("total_synthetic_records", 0)
+    k_safe    = total_syn - k_lt5
 
     uniq_level = "HIGH" if uniq_pct >= 20 else "MEDIUM" if uniq_pct >= 10 else "LOW"
     rare_level = "HIGH" if rare_pct >= 20 else "MEDIUM" if rare_pct >= 10 else "LOW"
 
-    # Linkage
+    # ── Linkage values ─────────────────────────────────────────────────────────
     exact_pct   = float(link.get("exact_match_score_pct", 0))
     hamming_pct = float(link.get("hamming_score_pct", 0))
 
     exact_detail   = link.get("exact_match", {})
     hamming_detail = link.get("hamming_nearest_neighbour", {})
 
-    exact_high   = exact_detail.get("exact_unique_link_count", 0)
-    exact_medium = exact_detail.get("exact_small_group_count", 0)
-    exact_none   = exact_detail.get("exact_no_link_count", 0)
+    exact_high      = exact_detail.get("exact_unique_link_count", 0)
+    exact_medium    = exact_detail.get("exact_small_group_count", 0)
+    exact_none      = exact_detail.get("exact_no_link_count", 0)
+    # Ambiguous = matched multiple real people (not uniquely linkable = low risk)
+    # Merge with no-link count for the pie chart since both represent non-identifiable records
+    exact_low_total = int(exact_none) + max(0, int(total_syn) - int(exact_high) - int(exact_medium) - int(exact_none))
 
     hamming_high   = hamming_detail.get("hamming_high_risk_close_match_count", 0)
     hamming_medium = hamming_detail.get("hamming_medium_risk_close_match_count", 0)
@@ -208,7 +223,10 @@ def generate_html(data: dict, out_path: str) -> None:
     hamming_high_t = hamming_detail.get("hamming_high_threshold", 0.10)
     hamming_med_t  = hamming_detail.get("hamming_medium_threshold", 0.30)
 
-    # Attribute inference
+    exact_level   = "HIGH" if exact_pct >= 30 else "MEDIUM" if exact_pct >= 10 else "LOW"
+    hamming_level = "HIGH" if hamming_pct >= 30 else "MEDIUM" if hamming_pct >= 10 else "LOW"
+
+    # ── Attribute inference values ─────────────────────────────────────────────
     sa_rows = [r for r in attr_rows if r.get("category") == "sa"]
     attr_max_risk = 0.0
     for r in sa_rows:
@@ -216,12 +234,13 @@ def generate_html(data: dict, out_path: str) -> None:
             attr_max_risk = max(attr_max_risk, float(r.get("max_risk", 0)))
         except (ValueError, TypeError):
             pass
+    attr_level = "HIGH" if attr_max_risk >= 0.20 else "MEDIUM" if attr_max_risk >= 0.10 else "LOW"
 
-    # QI / SA chips
+    # ── QI / SA chips ──────────────────────────────────────────────────────────
     qi_chips = _chips(qi_list, "#2b6cb0", "#ebf4ff", "#bee3f8")
     sa_chips = _chips(sa_list, "#553c9a", "#faf5ff", "#d6bcfa")
 
-    # Summary score cards — no risk labels, scores only
+    # ── Score cards (no risk labels) ───────────────────────────────────────────
     cards = f"""
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-top:12px;">
       {_score_card("Uniqueness Score", _fmt_pct(uniq_pct), "Records with k=1 in real data")}
@@ -231,19 +250,29 @@ def generate_html(data: dict, out_path: str) -> None:
       {_score_card("Attribute Inference Risk", _fmt_pct(attr_max_risk * 100), "Max gain over baseline across sensitive attributes")}
     </div>"""
 
-    # Uniqueness detail table
+    # ── Privacy Risk Overview cards (with risk labels) ─────────────────────────
+    overview_cards = f"""
+    <div style="display:flex;flex-wrap:nowrap;gap:12px;margin-top:12px;overflow-x:auto;">
+      {_risk_overview_card("Uniqueness Risk", _fmt_pct(uniq_pct), uniq_level)}
+      {_risk_overview_card("Rare Combination Risk", _fmt_pct(rare_pct), rare_level)}
+      {_risk_overview_card("Exact Match Risk", _fmt_pct(exact_pct), exact_level)}
+      {_risk_overview_card("Hamming Linkage Risk", _fmt_pct(hamming_pct), hamming_level)}
+      {_risk_overview_card("Attribute Inference Risk", _fmt_pct(attr_max_risk * 100), attr_level)}
+    </div>"""
+
+    # ── Uniqueness results table ───────────────────────────────────────────────
     uniq_table = _table(
         ["Category", "Count", "% of Synthetic", "Risk"],
         [
             ["Records with k=0 (no match in real data)", _fmt_num(k_zero),
              _fmt_pct(k_zero / total_syn * 100 if total_syn else 0),
-             _badge("HIGH" if k_zero > 0 else "LOW")],
+             _badge("HIGH" if int(k_zero) > 0 else "LOW")],
             ["Records with k=1 (unique — maps to exactly one real person)", _fmt_num(k_one),
              _fmt_pct(uniq_pct), _badge(uniq_level)],
             ["Records with k&lt;5 (rare — fewer than 5 real matches)", _fmt_num(k_lt5),
              _fmt_pct(rare_pct), _badge(rare_level)],
-            ["Records with k≥5 (sufficient real coverage)", _fmt_num(total_syn - k_lt5),
-             _fmt_pct((total_syn - k_lt5) / total_syn * 100 if total_syn else 0), _badge("LOW")],
+            ["Records with k≥5 (sufficient real coverage)", _fmt_num(k_safe),
+             _fmt_pct(k_safe / total_syn * 100 if total_syn else 0), _badge("LOW")],
         ]
     )
 
@@ -251,18 +280,18 @@ def generate_html(data: dict, out_path: str) -> None:
         ["Risk Level", "Score Range", "Meaning", "Recommended Action"],
         [
             [_badge("HIGH"), "≥ 20%",
-             "A large portion of synthetic records map uniquely to real individuals",
-             "Do not release — apply generalisation or suppression"],
+             "Too many synthetic records are unique — an attacker can directly link them to real individuals",
+             "Do not release"],
             [_badge("MEDIUM"), "10% – 19.99%",
-             "Some records have limited coverage in the real dataset",
-             "Review carefully — consider restricting access"],
+             "Some synthetic records are too similar to real records — limited privacy coverage in some QI combinations",
+             "Review carefully"],
             [_badge("LOW"), "< 10%",
-             "Most records have sufficient real-data coverage",
-             "Acceptable — verify the other risk dimensions as well"],
+             "Synthetic records are well covered — most do not closely resemble any single real person",
+             "Acceptable"],
         ]
     )
 
-    # Linkage detail table — Exact Match and Hamming shown separately, no combined row
+    # ── Linkage results table ──────────────────────────────────────────────────
     link_table = _table(
         ["Method", "Metric", "Count / Score", "Risk"],
         [
@@ -276,7 +305,7 @@ def generate_html(data: dict, out_path: str) -> None:
              _fmt_num(exact_none),
              _badge("LOW")],
             ["Exact Match", "Overall exact-match score", _fmt_pct(exact_pct),
-             _badge("HIGH" if exact_pct >= 30 else "MEDIUM" if exact_pct >= 10 else "LOW")],
+             _badge(exact_level)],
             ["Hamming NN", f"Records within high-risk distance (≤ {hamming_high_t:.0%})",
              _fmt_num(hamming_high),
              _badge("HIGH" if int(hamming_high) > 0 else "LOW")],
@@ -287,7 +316,7 @@ def generate_html(data: dict, out_path: str) -> None:
              _fmt_num(hamming_low),
              _badge("LOW")],
             ["Hamming NN", "Overall Hamming score", _fmt_pct(hamming_pct),
-             _badge("HIGH" if hamming_pct >= 30 else "MEDIUM" if hamming_pct >= 10 else "LOW")],
+             _badge(hamming_level)],
         ]
     )
 
@@ -295,27 +324,27 @@ def generate_html(data: dict, out_path: str) -> None:
         ["Risk Level", "Score Range", "Meaning", "Recommended Action"],
         [
             [_badge("HIGH"), "≥ 30%",
-             "A large share of synthetic records closely match real individuals",
-             "Do not release — re-identification is likely"],
+             "Most synthetic records can be closely matched to real individuals — re-identification is very likely",
+             "Do not release"],
             [_badge("MEDIUM"), "10% – 29.99%",
-             "Some records are linkable to real individuals",
-             "Apply caution — consider noise addition or suppression"],
+             "A portion of synthetic records are close enough to real records to be linkable",
+             "Review carefully"],
             [_badge("LOW"), "< 10%",
-             "Synthetic records are sufficiently distinct from real ones",
-             "Acceptable — verify the other risk dimensions as well"],
+             "Synthetic records are different enough from real records that linking them is difficult",
+             "Acceptable"],
         ]
     )
 
-    # Attribute inference table — one row per sensitive attribute
+    # ── Attribute inference results table ──────────────────────────────────────
     if sa_rows:
         attr_table = _table(
             ["Sensitive Attribute", "Max Risk Score", "Mean Risk Score", "QI Combination Used", "Risk Level"],
             [
                 [
-                    r.get("id", "—"),
+                    r.get("id") or "Unknown",
                     f"{float(r.get('max_risk', 0)):.4f}",
                     f"{float(r.get('mean_risk', 0)):.4f}",
-                    r.get("top_qid_set", "—"),
+                    r.get("top_qid_set") or ", ".join(qi_list),
                     _badge(
                         "HIGH" if float(r.get("max_risk", 0)) >= 0.20
                         else "MEDIUM" if float(r.get("max_risk", 0)) >= 0.10
@@ -335,16 +364,57 @@ def generate_html(data: dict, out_path: str) -> None:
         ["Risk Level", "Gain Over Baseline", "Meaning", "Recommended Action"],
         [
             [_badge("HIGH"), "≥ 0.20",
-             "The attacker gains 20%+ accuracy above random guessing — the attribute is predictable",
-             "Do not release — sensitive attributes are inferrable from QIs"],
+             "Knowing the QI values gives the attacker a strong advantage in guessing the sensitive attribute",
+             "Do not release"],
             [_badge("MEDIUM"), "0.10 – 0.19",
-             "Moderate advantage — the attribute is partially predictable",
-             "Review carefully — consider removing high-risk QI combinations"],
+             "The QI values give the attacker some advantage in guessing the sensitive attribute",
+             "Review carefully"],
             [_badge("LOW"), "< 0.10",
-             "The attacker barely outperforms random guessing",
-             "Acceptable — monitor if the QI set changes"],
+             "Knowing the QI values barely helps — the attacker cannot reliably predict the sensitive attribute",
+             "Acceptable"],
         ]
     )
+
+    # ── Chart data for JavaScript ──────────────────────────────────────────────
+    # k-distribution chart data
+    k_dist_data = [
+        {"label": "k=0", "count": int(k_zero), "color": "#ef4444"},
+        {"label": "k=1", "count": int(k_one), "color": "#f97316"},
+        {"label": "k<5", "count": int(k_lt5 - k_one), "color": "#eab308"},
+        {"label": "k≥5", "count": int(k_safe), "color": "#22c55e"},
+    ]
+
+    # Exact match pie chart data
+    exact_pie_data = [
+        {"label": "Unique exact link (HIGH)", "count": int(exact_high), "color": "#ef4444"},
+        {"label": "Small group match (MEDIUM)", "count": int(exact_medium), "color": "#f97316"},
+        {"label": "No unique link found (LOW)", "count": exact_low_total, "color": "#22c55e"},
+    ]
+
+    # Hamming pie chart data
+    hamming_pie_data = [
+        {"label": f"High risk (≤{hamming_high_t:.0%})", "count": int(hamming_high), "color": "#ef4444"},
+        {"label": f"Medium risk (≤{hamming_med_t:.0%})", "count": int(hamming_medium), "color": "#f97316"},
+        {"label": "Low risk", "count": int(hamming_low), "color": "#22c55e"},
+    ]
+
+    # Attribute inference bar chart data
+    attr_chart_data = []
+    for r in sa_rows:
+        try:
+            attr_chart_data.append({
+                "label": r.get("id", "—"),
+                "max_risk": round(float(r.get("max_risk", 0)) * 100, 4),
+                "mean_risk": round(float(r.get("mean_risk", 0)) * 100, 4),
+            })
+        except (ValueError, TypeError):
+            pass
+
+    import json as _json
+    k_dist_json      = _json.dumps(k_dist_data)
+    exact_pie_json   = _json.dumps(exact_pie_data)
+    hamming_pie_json = _json.dumps(hamming_pie_data)
+    attr_chart_json  = _json.dumps(attr_chart_data)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -352,12 +422,21 @@ def generate_html(data: dict, out_path: str) -> None:
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Privacy Risk Assessment Report</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0;}}
   body{{font-family:"Segoe UI",Arial,sans-serif;background:#f0f4f8;
         color:#1a202c;font-size:14px;line-height:1.6;}}
   code{{background:#edf2f7;padding:2px 6px;border-radius:4px;
         font-size:12px;font-family:monospace;}}
+  .eq{{background:#f7fafc;border-left:4px solid #2b6cb0;border-radius:6px;
+       padding:12px 16px;margin:12px 0;font-family:monospace;font-size:13px;color:#2d3748;}}
+  .chart-wrap{{background:#fff;border-radius:10px;padding:20px 24px;
+               box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-top:16px;}}
+  .chart-title{{font-size:13px;font-weight:700;color:#2d3748;margin-bottom:4px;}}
+  .chart-sub{{font-size:12px;color:#718096;margin-bottom:16px;}}
+  .charts-grid{{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;}}
+  @media(max-width:700px){{.charts-grid{{grid-template-columns:1fr;}}}}
   @media print{{
     body{{background:#fff;}}
     .hdr,.ftr{{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
@@ -377,8 +456,9 @@ def generate_html(data: dict, out_path: str) -> None:
   </div>
 </div>
 
-<div style="max-width:960px;margin:32px auto;padding:0 20px 64px;">
+<div style="max-width:1000px;margin:32px auto;padding:0 20px 64px;">
 
+  <!-- ANALYSIS CONFIGURATION -->
   {_section_title("Analysis Configuration")}
   <div style="background:#fff;border-radius:10px;padding:20px 24px;
               box-shadow:0 1px 4px rgba(0,0,0,0.08);">
@@ -392,9 +472,17 @@ def generate_html(data: dict, out_path: str) -> None:
     <div>{sa_chips if sa_chips else "<em>None recorded</em>"}</div>
   </div>
 
-  {_section_title("Score Summary")}
-  {cards}
+  <!-- PRIVACY RISK OVERVIEW -->
+  {_section_title("Privacy Risk Overview")}
+  <div style="background:#fff;border-radius:10px;padding:16px 24px;
+              box-shadow:0 1px 4px rgba(0,0,0,0.08);font-size:13px;
+              color:#4a5568;margin-bottom:16px;">
+    Risk levels are determined independently for each metric using its own thresholds.
+    A single metric rated HIGH is sufficient reason to withhold release of the synthetic dataset.
+  </div>
+  {overview_cards}
 
+  <!-- SECTION 1: UNIQUENESS -->
   {_section_title("1. Uniqueness and Rare-Combination Risk")}
   <div style="background:#fff;border-radius:10px;padding:20px 24px;
               box-shadow:0 1px 4px rgba(0,0,0,0.08);font-size:13px;line-height:1.8;">
@@ -402,39 +490,88 @@ def generate_html(data: dict, out_path: str) -> None:
     quasi-identifier values is counted. This count is referred to as <code>k</code>.
     A record with <code>k=1</code> maps to exactly one real individual, which
     represents a direct re-identification risk. Records with <code>k&lt;5</code>
-    are classified as rare. The uniqueness score is the percentage of synthetic
-    records where <code>k=1</code>.
+    are classified as rare combinations with elevated risk.<br/><br/>
+    <strong>Uniqueness Score equation:</strong>
+    <div class="eq">Uniqueness Score (%) = (Number of synthetic records with k=1) ÷ (Total synthetic records) × 100</div>
+    <strong>Rare Combination Score equation:</strong>
+    <div class="eq">Rare Combination Score (%) = (Number of synthetic records with k&lt;5) ÷ (Total synthetic records) × 100</div>
+  </div>
+  <div class="chart-wrap" style="margin-top:16px;">
+    <div class="chart-title">Synthetic Record k-Value Distribution</div>
+    <div class="chart-sub">
+      Each bar shows how many synthetic records fall into each k category.
+      k=0 means no real match exists. k=1 means only one real person shares those values.
+      k&lt;5 means fewer than 5 real people share those values. k≥5 is considered safe.
+    </div>
+    <canvas id="kDistChart" height="100"></canvas>
   </div>
   <div style="margin-top:16px;">{uniq_table}</div>
   <div style="margin-top:20px;">{_section_title("Uniqueness Risk Thresholds")}</div>
   {uniq_thresh}
 
+  <!-- SECTION 2: RE-IDENTIFICATION -->
   {_section_title("2. Re-identification Risk")}
   <div style="background:#fff;border-radius:10px;padding:20px 24px;
               box-shadow:0 1px 4px rgba(0,0,0,0.08);font-size:13px;line-height:1.8;">
-    Two separate linkage methods are used.<br/><br/>
-    <strong>Exact-match linkage</strong> checks whether a synthetic record has
-    an identical match in the real dataset across all selected QI columns.
-    A unique exact match means only one real person shares those values.<br/><br/>
-    <strong>Hamming nearest-neighbour linkage</strong> finds the closest real
-    record to each synthetic record using Hamming distance across QI columns.
-    A distance of 0.0 is identical; 1.0 is completely different. Records within
-    <code>{hamming_high_t:.0%}</code> Hamming distance are flagged as high risk.
+    Two separate linkage methods are applied to measure re-identification risk.<br/><br/>
+    <strong>Exact-match linkage</strong> checks whether a synthetic record has an
+    identical match in the real dataset across all selected QI columns. A unique
+    exact match (k=1) means only one real person shares those values.<br/>
+    <div class="eq">Exact Match Score (%) = (Synthetic records with exactly 1 real match) ÷ (Total synthetic records) × 100</div>
+    <strong>Hamming nearest-neighbour linkage</strong> finds the closest real record
+    to each synthetic record by measuring how many QI values differ between them.
+    A distance of 0.0 is identical; 1.0 is completely different.<br/>
+    <div class="eq">Hamming Distance = (Number of differing QI values) ÷ (Total number of QIs)</div>
+    <div class="eq">Hamming Score (%) = (Synthetic records with Hamming distance ≤ {hamming_high_t:.2f}) ÷ (Total synthetic records) × 100</div>
+    Records within <code>{hamming_high_t:.0%}</code> Hamming distance of a real
+    record are flagged as high risk.
+  </div>
+  <div class="charts-grid" style="margin-top:16px;">
+    <div class="chart-wrap">
+      <div class="chart-title">Exact Match Linkage — Record Distribution</div>
+      <div class="chart-sub">
+        Shows how many synthetic records have a unique exact match, a small group match,
+        or no match at all in the real dataset based on QI values.
+      </div>
+      <canvas id="exactPieChart" height="200"></canvas>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-title">Hamming Nearest-Neighbour — Record Distribution</div>
+      <div class="chart-sub">
+        Shows how many synthetic records are within high, medium, or low Hamming distance
+        of their nearest real record. Closer distance means higher re-identification risk.
+      </div>
+      <canvas id="hammingPieChart" height="200"></canvas>
+    </div>
   </div>
   <div style="margin-top:16px;">{link_table}</div>
   <div style="margin-top:20px;">{_section_title("Re-identification Risk Thresholds")}</div>
   {link_thresh}
 
+  <!-- SECTION 3: ATTRIBUTE INFERENCE -->
   {_section_title("3. Attribute Inference Risk")}
   <div style="background:#fff;border-radius:10px;padding:20px 24px;
               box-shadow:0 1px 4px rgba(0,0,0,0.08);font-size:13px;line-height:1.8;">
     A majority-label attack is simulated for each sensitive attribute. The attacker
     uses the selected QI columns to look up the most common value of that sensitive
     attribute in the real dataset for each QI combination, then predicts that value
-    for synthetic records. The <strong>gain over baseline</strong> measures how much
-    better this attack performs compared to always predicting the single most common
-    overall value. A high gain indicates that the QI columns reveal information about
-    the sensitive attribute. Results are shown separately for each sensitive attribute.
+    for synthetic records.<br/><br/>
+    <strong>Gain over baseline</strong> measures how much better the attack performs
+    compared to always predicting the single most common overall value:
+    <div class="eq">Gain over Baseline = Attack Accuracy − Baseline Accuracy</div>
+    <strong>Risk Score</strong> combines coverage (how many records the attack can target)
+    with the gain:
+    <div class="eq">Risk Score = Coverage Rate × Gain over Baseline</div>
+    A high gain indicates that the QI columns reveal information about the sensitive
+    attribute. Results are shown separately for each sensitive attribute.
+  </div>
+  <div class="chart-wrap" style="margin-top:16px;">
+    <div class="chart-title">Attribute Inference Risk by Sensitive Attribute</div>
+    <div class="chart-sub">
+      Max and mean risk score (%) per sensitive attribute.
+      Risk score = coverage rate × gain over baseline. Threshold: HIGH ≥ 20%, MEDIUM ≥ 10%, LOW &lt; 10%.
+    </div>
+    <canvas id="attrChart" height="100"></canvas>
   </div>
   <div style="margin-top:16px;">{attr_table}</div>
   <div style="margin-top:20px;">{_section_title("Attribute Inference Risk Thresholds")}</div>
@@ -447,6 +584,161 @@ def generate_html(data: dict, out_path: str) -> None:
   <span>Privacy Risk Assessment System &nbsp;·&nbsp; Western Sydney University</span>
   <span>Generated: {generated_at}</span>
 </div>
+
+<script>
+// ── k-distribution bar chart ──────────────────────────────────────────────────
+(function() {{
+  const data = {k_dist_json};
+  const ctx = document.getElementById('kDistChart').getContext('2d');
+  new Chart(ctx, {{
+    type: 'bar',
+    data: {{
+      labels: data.map(d => d.label),
+      datasets: [{{
+        label: 'Number of Records',
+        data: data.map(d => d.count),
+        backgroundColor: data.map(d => d.color),
+        borderRadius: 4,
+      }}]
+    }},
+    options: {{
+      responsive: true,
+      plugins: {{
+        legend: {{ display: false }},
+        tooltip: {{
+          callbacks: {{
+            label: ctx => ' ' + ctx.parsed.y.toLocaleString() + ' records'
+          }}
+        }}
+      }},
+      scales: {{
+        x: {{ grid: {{ display: false }} }},
+        y: {{
+          beginAtZero: true,
+          ticks: {{ callback: v => v >= 1000 ? (v/1000).toFixed(0)+'k' : v }}
+        }}
+      }}
+    }}
+  }});
+}})();
+
+// ── Exact match pie chart ─────────────────────────────────────────────────────
+(function() {{
+  const allData = {exact_pie_json};
+  const total = allData.reduce((s, d) => s + d.count, 0);
+  // Filter out zero-count slices to avoid white gaps
+  const data = total > 0 ? allData.filter(d => d.count > 0) : allData;
+  const ctx = document.getElementById('exactPieChart').getContext('2d');
+  new Chart(ctx, {{
+    type: 'pie',
+    data: {{
+      labels: data.map(d => d.label),
+      datasets: [{{
+        data: data.map(d => d.count),
+        backgroundColor: data.map(d => d.color),
+        borderWidth: data.length === 1 ? 0 : 1,
+      }}]
+    }},
+    options: {{
+      responsive: true,
+      plugins: {{
+        legend: {{ position: 'bottom', labels: {{ font: {{ size: 11 }} }} }},
+        tooltip: {{
+          callbacks: {{
+            label: ctx => {{
+              const pct = total > 0 ? (ctx.parsed / total * 100).toFixed(2) : 0;
+              return ' ' + ctx.parsed.toLocaleString() + ' records (' + pct + '%)';
+            }}
+          }}
+        }}
+      }}
+    }}
+  }});
+}})();
+
+// ── Hamming pie chart ─────────────────────────────────────────────────────────
+(function() {{
+  const allData = {hamming_pie_json};
+  const total = allData.reduce((s, d) => s + d.count, 0);
+  // Filter out zero-count slices to avoid white gaps
+  const data = allData.filter(d => d.count > 0);
+  const ctx = document.getElementById('hammingPieChart').getContext('2d');
+  new Chart(ctx, {{
+    type: 'pie',
+    data: {{
+      labels: data.map(d => d.label),
+      datasets: [{{
+        data: data.map(d => d.count),
+        backgroundColor: data.map(d => d.color),
+        borderWidth: data.length === 1 ? 0 : 1,
+      }}]
+    }},
+    options: {{
+      responsive: true,
+      plugins: {{
+        legend: {{ position: 'bottom', labels: {{ font: {{ size: 11 }} }} }},
+        tooltip: {{
+          callbacks: {{
+            label: ctx => {{
+              const pct = total > 0 ? (ctx.parsed / total * 100).toFixed(2) : 0;
+              return ' ' + ctx.parsed.toLocaleString() + ' records (' + pct + '%)';
+            }}
+          }}
+        }}
+      }}
+    }}
+  }});
+}})();
+
+// ── Attribute inference grouped bar chart ─────────────────────────────────────
+(function() {{
+  const data = {attr_chart_json};
+  if (!data.length) return;
+  const ctx = document.getElementById('attrChart').getContext('2d');
+  new Chart(ctx, {{
+    type: 'bar',
+    data: {{
+      labels: data.map(d => d.label),
+      datasets: [
+        {{
+          label: 'Max Risk Score (%)',
+          data: data.map(d => d.max_risk),
+          backgroundColor: data.map(d =>
+            d.max_risk >= 20 ? '#ef4444' : d.max_risk >= 10 ? '#f97316' : '#22c55e'
+          ),
+          borderRadius: 4,
+        }},
+        {{
+          label: 'Mean Risk Score (%)',
+          data: data.map(d => d.mean_risk),
+          backgroundColor: data.map(d =>
+            d.mean_risk >= 20 ? '#c53030' : d.mean_risk >= 10 ? '#c05621' : '#276749'
+          ),
+          borderRadius: 4,
+        }}
+      ]
+    }},
+    options: {{
+      responsive: true,
+      plugins: {{
+        legend: {{ position: 'top' }},
+        tooltip: {{
+          callbacks: {{
+            label: ctx => ' ' + ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(4) + '%'
+          }}
+        }}
+      }},
+      scales: {{
+        x: {{ grid: {{ display: false }} }},
+        y: {{
+          beginAtZero: true,
+          title: {{ display: true, text: 'Risk Score (%)' }}
+        }}
+      }}
+    }}
+  }});
+}})();
+</script>
 
 </body>
 </html>"""
@@ -471,10 +763,12 @@ def generate_csv(data: dict, out_path: str) -> None:
     exact_pct   = float(link.get("exact_match_score_pct", 0))
     hamming_pct = float(link.get("hamming_score_pct", 0))
 
-    uniq_level = "HIGH" if uniq_pct >= 20 else "MEDIUM" if uniq_pct >= 10 else "LOW"
-    rare_level = "HIGH" if rare_pct >= 20 else "MEDIUM" if rare_pct >= 10 else "LOW"
+    uniq_level    = "HIGH" if uniq_pct >= 20 else "MEDIUM" if uniq_pct >= 10 else "LOW"
+    rare_level    = "HIGH" if rare_pct >= 20 else "MEDIUM" if rare_pct >= 10 else "LOW"
+    exact_level   = "HIGH" if exact_pct >= 30 else "MEDIUM" if exact_pct >= 10 else "LOW"
+    hamming_level = "HIGH" if hamming_pct >= 30 else "MEDIUM" if hamming_pct >= 10 else "LOW"
 
-    k_zero = uniq.get("k_zero_count", 0)
+    k_zero       = uniq.get("k_zero_count", 0)
     k_zero_level = "HIGH" if int(k_zero) > 0 else "LOW"
 
     rows = [
@@ -486,9 +780,9 @@ def generate_csv(data: dict, out_path: str) -> None:
         ["", "", "", "", ""],
 
         ["Uniqueness Risk", "Uniqueness Score (k=1)", f"{uniq_pct:.4f}%", uniq_level,
-         "Threshold: HIGH>=20%, MEDIUM>=10%, LOW<10%"],
+         "Formula: (records with k=1 / total synthetic) x 100. Threshold: HIGH>=20%, MEDIUM>=10%, LOW<10%"],
         ["Uniqueness Risk", "Rare Combination Score (k<5)", f"{rare_pct:.4f}%", rare_level,
-         "Threshold: HIGH>=20%, MEDIUM>=10%, LOW<10%"],
+         "Formula: (records with k<5 / total synthetic) x 100. Threshold: HIGH>=20%, MEDIUM>=10%, LOW<10%"],
         ["Uniqueness Risk", "Records k=0", str(uniq.get("k_zero_count", 0)), k_zero_level,
          "No match found in real data"],
         ["Uniqueness Risk", "Records k=1", str(uniq.get("k_one_count", 0)), uniq_level,
@@ -499,20 +793,18 @@ def generate_csv(data: dict, out_path: str) -> None:
          str(uniq.get("total_synthetic_records", 0)), "", ""],
         ["", "", "", "", ""],
 
-        ["Re-identification Risk", "Exact Match Score", f"{exact_pct:.4f}%",
-         "HIGH" if exact_pct >= 30 else "MEDIUM" if exact_pct >= 10 else "LOW",
-         "Threshold: HIGH>=30%, MEDIUM>=10%, LOW<10%"],
-        ["Re-identification Risk", "Hamming NN Score", f"{hamming_pct:.4f}%",
-         "HIGH" if hamming_pct >= 30 else "MEDIUM" if hamming_pct >= 10 else "LOW",
-         "Threshold: HIGH>=30%, MEDIUM>=10%, LOW<10%"],
+        ["Re-identification Risk", "Exact Match Score", f"{exact_pct:.4f}%", exact_level,
+         "Formula: (records with 1 real match / total synthetic) x 100. Threshold: HIGH>=30%, MEDIUM>=10%, LOW<10%"],
+        ["Re-identification Risk", "Hamming NN Score", f"{hamming_pct:.4f}%", hamming_level,
+         "Formula: (records with Hamming distance <= threshold / total synthetic) x 100. Threshold: HIGH>=30%, MEDIUM>=10%, LOW<10%"],
         ["", "", "", "", ""],
 
         *[
-            ["Attribute Inference Risk", f"SA: {r.get('id', '—')}",
+            ["Attribute Inference Risk", f"SA: {r.get('id') or 'Unknown'}",
              f"max_risk={float(r.get('max_risk', 0)):.4f}  mean_risk={float(r.get('mean_risk', 0)):.4f}",
              "HIGH" if float(r.get("max_risk", 0)) >= 0.20
              else "MEDIUM" if float(r.get("max_risk", 0)) >= 0.10 else "LOW",
-             f"QI combination: {r.get('top_qid_set', '—')}  |  Threshold: HIGH>=0.20, MEDIUM>=0.10, LOW<0.10"]
+             f"Formula: coverage_rate x gain_over_baseline. QI combination: {r.get('top_qid_set') or ', '.join(qi_list)} | Threshold: HIGH>=0.20, MEDIUM>=0.10, LOW<0.10"]
             for r in attr_rows
         ],
     ]
